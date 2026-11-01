@@ -37,6 +37,7 @@ SD, suspend/resume and USB adb.
 | Test loop | manual | `tools/testboot-loop.sh`, RAM boot by default |
 | rootfs build | host Ubuntu + `sudo` + loop mounts | same script in a privileged arm64 container; `OUT` moved to container disk |
 | vbmeta_b | stock/verifying | `--flags 2` (from the 7.1.5 work; still on the phone) |
+| Visible identity | `rain` USB serial, `rain-ubuntu` host/user, fs label | `fog` / `fog-ubuntu` / user `fog` (`tools/v730-fog-identity.py`) |
 
 The HS-PHY delta is the one that mattered on this unit: with `vdda-pll` on
 L12 the PHY core never got its 0.88 V rail and the UDC reported

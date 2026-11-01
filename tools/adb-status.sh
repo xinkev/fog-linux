@@ -50,7 +50,7 @@ esac
 cat <<'EOF'
 
 === cookbook ===
-adb shell 'uname -a; id'              root shell on rain-ubuntu
+adb shell 'uname -a; id'              root shell on fog-ubuntu (1000 = user fog)
 adb shell dmesg -w                    live kernel log
 adb pull /var/log/rain-boot-report.txt
 adb push file /usr/local/sbin/        userspace edits need no cust reflash

@@ -35,6 +35,9 @@ cmd_base() {
     git -C "$ROOT/Redmi10c-base" worktree add "$V730" origin/v7.3.0
   fi
 
+  log "applying fog identity (USB serial/product, hostname, user, fs label)"
+  python3 "$ROOT/tools/v730-fog-identity.py" "$V730"
+
   if [ ! -f "$V730/initramfs/lib/firmware/focaltech_ts_fw_xinli.bin" ]; then
     log "fetching firmware $FW_TAG"
     tmp="$(mktemp -d)"

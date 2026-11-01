@@ -16,7 +16,12 @@ Wi-Fi driver up and scanning, touch driver probes but firmware download fails
 | --- | --- |
 | `a` | stock MIUI 14 `V14.0.10.0.TGEEUXM` (untouched) |
 | `b` | legacy 7.1.5 `boot_b` / Ubuntu 24.04 rootfs (still bootable fallback) |
-| `cust` | Ubuntu 26.04.1 rootfs (`rain-ubuntu`, ext4 1800 MB / 1.5 GB sparse) |
+| `cust` | Ubuntu 26.04.1 rootfs (`fog-ubuntu`, ext4 1800 MB / 1.5 GB sparse) |
+
+Both the hostname and the adb serial are `fog` on the 26.04 image; upstream's
+internal unit/script names (`rain-overlay`, `rain-*.service`) are unchanged
+and still show up in `systemctl`. The legacy slot-B rootfs predates this and
+still says `rain`.
 
 Return to Android: `fastboot --set-active=a && fastboot reboot`.
 
@@ -26,15 +31,15 @@ Return to Android: `fastboot --set-active=a && fastboot reboot`.
 
 | `adb devices -l` shows | What it is | Next |
 | --- | --- | --- |
-| `rain device` + kernel 7.3 | Linux, RAM boot | `adb shell` (root) |
-| `rain device` + kernel 7.1.5 | legacy Linux on slot B | `make test` replaces it |
+| `fog device` + kernel 7.3 | Linux, RAM boot — `fog` serial is the 26.04 rootfs | `adb shell` (root) |
+| `rain device` + kernel 7.1.5 | legacy Linux on slot B (`rain` serial) | `make test` replaces it |
 | `… recovery product:fog` | PBRP recovery (RAM boot) | `make test` |
 | `… product:fog_eea` | stock Android, slot A | `make test` |
 | `unauthorized` | adbd up, host key missing | rebuild rootfs (`make rootfs`) |
 | fastboot list | bootloader | `make test` |
 
 ```sh
-adb shell 'uname -a; id'              # root on rain-ubuntu
+adb shell 'uname -a; id'              # root on fog-ubuntu
 adb shell dmesg -w                    # live kernel log
 adb shell 'cat /sys/class/drm/card0-DSI-1/status'   # connected
 adb shell 'cat /sys/class/graphics/fb0/virtual_size' # 720,1650
@@ -156,7 +161,7 @@ For a persistent slot-B install (only if RAM boot is refused): erase
 `dtbo_b`, flash `boot_b` + `vbmeta_b` + `cust`, `--set-active=b`, reboot.
 Read AGENTS.md §5 first — a failed slot boot burns one of 7 retries.
 
-Boot takes ~35 s to adb. Success: `adb devices` → `rain device`, display
+Boot takes ~35 s to adb. Success: `adb devices` → `fog device` (kernel 7.3), display
 shows the fbcon console, `card0-DSI-1` is `connected`.
 
 ---
@@ -171,6 +176,7 @@ shows the fbcon console, `card0-DSI-1` is `connected`.
 | adb up, no touch | FTS firmware download fails (see known issues) |
 | `systemctl is-system-running` = starting | `systemctl list-jobs`; `rain-gps.service` blocks for a minute without network |
 | `qbootctl.service` failed | normal for RAM boot — there is no boot slot to mark good |
+| Hangs on the splash right after `fastboot flash cust`, no adb | seen once — a retried `fastboot boot` of the same image worked; retry before bisecting the image |
 
 ### Slot retry counter (the silent fallback)
 
