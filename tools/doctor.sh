@@ -24,10 +24,12 @@ if [ -f "$BASE/out/linux-7.1.5/arch/arm64/boot/Image.gz" ]; then ok "kernel buil
 else no "kernel not built — make kernel (~10 min)"; fi
 
 echo "artifacts"
-for f in "$OUT/boot-linux.img" "$OUT/linux_rootfs.img" "$OUT/linux_rootfs.sparse.img"; do
-    if [ -f "$f" ]; then ok "$(basename "$f")"
-    else no "$(basename "$f") — make image / make rootfs"; fi
-done
+if [ -f "$OUT/boot-linux.img" ]; then ok boot-linux.img
+else no "boot-linux.img — make image"; fi
+if [ -f "$OUT/linux_rootfs.img" ]; then ok linux_rootfs.img
+else no "linux_rootfs.img — debootstrap, see RUNBOOK 'Rootfs' (~20 min)"; fi
+if [ -f "$OUT/linux_rootfs.sparse.img" ]; then ok linux_rootfs.sparse.img
+else no "linux_rootfs.sparse.img — make rootfs"; fi
 
 echo "device"
 adb_state=$(adb devices 2>/dev/null | awk 'NR>1 && NF {print $2; exit}')
