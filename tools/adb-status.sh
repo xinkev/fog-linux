@@ -1,7 +1,33 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
 # What is adb actually talking to, and how do I use it?
+#
+# `--check` is the machine-readable gate used by tools/testboot-loop.sh:
+#   0  the 26.04 `fog` image is up (adb serial `fog`, kernel 7.x)
+#   1  adb is up but it is not that image (legacy `rain` rootfs, other kernel)
+#   2  no adb device
+#   3  adb has the device but not in state `device` (unauthorized/offline)
+# Override the expected serial with EXPECT_SERIAL=...
 set -uo pipefail
+
+EXPECT_SERIAL="${EXPECT_SERIAL:-fog}"
+
+if [ "${1:-}" = "--check" ]; then
+    state=$(adb devices 2>/dev/null | awk 'NR>1 && NF {print $2; exit}')
+    serial=$(adb devices 2>/dev/null | awk 'NR>1 && $2=="device"{print $1; exit}')
+    [ -n "$state" ] || { echo "no adb device"; exit 2; }
+    [ "$state" = "device" ] || { echo "adb state=$state"; exit 3; }
+    [ "$serial" = "$EXPECT_SERIAL" ] || {
+        echo "adb serial=$serial, expected $EXPECT_SERIAL (legacy rootfs or another phone?)"
+        exit 1
+    }
+    kver=$(adb shell uname -r 2>/dev/null | tr -d '\r')
+    case "$kver" in
+        7.*) echo "fog on Linux $kver"; exit 0 ;;
+    esac
+    echo "adb serial=$serial but kernel is '$kver', expected 7.x"
+    exit 1
+fi
 
 echo "=== adb state ==="
 adb devices -l 2>/dev/null || true

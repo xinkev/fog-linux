@@ -164,6 +164,15 @@ Read AGENTS.md §5 first — a failed slot boot burns one of 7 retries.
 Boot takes ~35 s to adb. Success: `adb devices` → `fog device` (kernel 7.3), display
 shows the fbcon console, `card0-DSI-1` is `connected`.
 
+`make test` enforces that, not just "something answered on adb": after adb
+appears it runs `tools/adb-status.sh --check`, which requires serial `fog`
+(override with `EXPECT_SERIAL=`) and kernel `7.x`. A legacy `rain` rootfs or a
+wrong kernel fails the run (exit 5) instead of passing as "booted"; the failed
+evidence lands in `docs/.scratch/adb-check.txt`. Exit codes: 0 booted, 2 no
+fastboot, 3 flash/boot refused, 4 boot never completed, 5 wrong identity.
+The legacy slot path likewise exits 4 now when the phone never returns to
+fastboot — it used to warn and report success.
+
 ---
 
 ## Diagnosing a failed boot

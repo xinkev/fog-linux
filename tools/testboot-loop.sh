@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# Autonomous test-boot loop for the Redmi 10C (rain/fog).
+# Autonomous test-boot loop for the Redmi 10C (fog).
 #
-# The phone reboots itself into fastboot after each test boot
-# (rain-autoreboot.service), so no physical power cycle is needed:
-#
-#   flash boot_b + cust -> boot -> wait for fastboot to return
-#     -> RAM-boot PBRP -> mount cust -> pull the report -> exit
+# RAM boot (the default for the v7.3.0 image) writes no slot: boot the image,
+# wait for adb, gate on the identity, capture the checks, return to fastboot.
+# The legacy slot-B path flashes boot_b + cust, boots, and waits for the phone
+# to reboot itself back to fastboot (rain-autoreboot.service).
 #
 # Usage: tools/testboot-loop.sh [--no-flash] [--keep-going] [--timeout SEC]
+#
+# Exit: 0 booted (identity gate passed), 2 no fastboot, 3 flash/boot refused,
+#       4 boot did not complete, 5 adb came up but not as the fog image.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -89,6 +91,23 @@ run_ram_boot() {
     return 4
   fi
   log "adb up: $st"
+
+  # A boot only counts if it is the 26.04 fog image. Anything else on adb
+  # (a legacy `rain` rootfs, a wrong kernel, another phone) used to pass as
+  # "booted"; that hides exactly the regressions this loop exists to catch.
+  if ! check=$("$ROOT/tools/adb-status.sh" --check); then
+    log "FAIL: adb is up but not the fog 26.04 image: $check"
+    {
+      echo "identity check failed: $check"
+      adb devices -l
+      adb shell 'uname -a; hostname; id' 2>&1
+    } >"$SCRATCH/adb-check.txt" 2>&1
+    log "wrote $SCRATCH/adb-check.txt; returning to fastboot"
+    reboot_to_fastboot
+    wait_fb 90 || log "WARN: did not return to fastboot"
+    return 5
+  fi
+  log "identity: $check"
 
   {
     adb devices -l
@@ -245,4 +264,17 @@ if [ -f "$SCRATCH/rain-boot-report.txt" ]; then
     "$SCRATCH/rain-boot-report.txt" | head -12
   echo "--------------------------"
 fi
-exit 0
+
+# Legacy slot-B path: coming back to fastboot is the only evidence that
+# userspace ran (the 24.04 image reports then reboots itself). Do not exit 0
+# on a boot that never got there — that is the regression this catches.
+if [ "$returned" -eq 1 ]; then
+  log "PASS: booted and returned to fastboot"
+  exit 0
+fi
+if [ "$adb_hit" -eq 1 ]; then
+  log "FAIL: adb appeared but the phone never returned to fastboot within ${TIMEOUT}s"
+else
+  log "FAIL: no adb and no return to fastboot within ${TIMEOUT}s"
+fi
+exit 4
