@@ -9,6 +9,9 @@ Occasional guessing is fine but almost always prefer evidence based approach. Fo
 
 ## 1. Before work
 
+Start every session with `make doctor` and `gh issue list`; the open work lives
+in issues, not in this tree.
+
 | Task | Artifact |
 | --- | --- |
 | New design | `docs/specs/<date>-<slug>.md` — goal, non-goals, acceptance, risks |

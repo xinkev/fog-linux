@@ -13,6 +13,16 @@ One blocker left: USB never enumerates.
 
 Roadmap: **P2** grow `cust` → ~20 GB · **P3** Wi-Fi/BT/display/touch · **P4** GPU, audio, modem.
 
+## Resuming in a new session
+
+```
+make doctor      # what exists here, what the phone is doing
+gh issue list    # open work, newest decisions in the issue bodies
+```
+
+Then read **RUNBOOK → Known gaps** before changing anything about USB: it lists
+what has already been disproved, so you don't re-run dead experiments.
+
 ## Start here
 
 ```
