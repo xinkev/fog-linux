@@ -1,11 +1,12 @@
 # Redmi 10C (`fog`/`rain`) — Linux bring-up runbook
 
-Base: [Damir00109/Redmi10c](UPSTREAM.md) (GPL-2.0), mainline **v7.1.5** +
-`patches/redmi10c-mainline-20260813.patch`.
+Base: [Damir00109/Redmi10c](UPSTREAM.md) `v7.3.0` (GPL-2.0) — kernel **7.3** +
+`kernel.patch`, Ubuntu **26.04.1** on `cust`.
 
-**Status 2026-11-02: mainline Linux boots on this phone** (slot B) to a
-framebuffer login prompt on Ubuntu 24.04 from `cust`; **adb over USB works**
-(root shell). Slot A is stock MIUI Android and is the fallback.
+**Status 2026-11-02: v7.3.0 boots on this `fog` unit** via RAM boot
+(`fastboot boot`): Ubuntu 26.04, root adb, DRM panel 720x1650 + fbcon,
+Wi-Fi driver up and scanning, touch driver probes but firmware download fails
+(known issue below). Slot A is stock MIUI Android and is the fallback.
 
 ---
 
@@ -13,9 +14,9 @@ framebuffer login prompt on Ubuntu 24.04 from `cust`; **adb over USB works**
 
 | Slot | Contents |
 | --- | --- |
-| `a` | stock MIUI 14 `V14.0.10.0.TGEEUXM` (boot/vendor_boot/vbmeta/dtbo restored from `reference/`) |
-| `b` | mainline `boot_b` (header v2), custom `vbmeta_b` (`--flags 2`), `dtbo_b` erased |
-| `cust` | Ubuntu 24.04 rootfs (`rain-ubuntu`, ext4, 1.8 GB image / ~514 MB sparse) |
+| `a` | stock MIUI 14 `V14.0.10.0.TGEEUXM` (untouched) |
+| `b` | legacy 7.1.5 `boot_b` / Ubuntu 24.04 rootfs (still bootable fallback) |
+| `cust` | Ubuntu 26.04.1 rootfs (`rain-ubuntu`, ext4 1800 MB / 1.5 GB sparse) |
 
 Return to Android: `fastboot --set-active=a && fastboot reboot`.
 
@@ -25,168 +26,138 @@ Return to Android: `fastboot --set-active=a && fastboot reboot`.
 
 | `adb devices -l` shows | What it is | Next |
 | --- | --- | --- |
-| `rain device` | Linux from slot B | `adb shell` (root) |
-| `… recovery product:fog` | PBRP recovery (RAM boot) | `make test SKIP_CUST=1` |
-| `… product:fog_eea` | stock Android, slot A | `make test SKIP_CUST=1` |
-| `unauthorized` | adbd up, host key missing | `make rootfs`, reboot |
+| `rain device` + kernel 7.3 | Linux, RAM boot | `adb shell` (root) |
+| `rain device` + kernel 7.1.5 | legacy Linux on slot B | `make test` replaces it |
+| `… recovery product:fog` | PBRP recovery (RAM boot) | `make test` |
+| `… product:fog_eea` | stock Android, slot A | `make test` |
+| `unauthorized` | adbd up, host key missing | rebuild rootfs (`make rootfs`) |
 | fastboot list | bootloader | `make test` |
-
-`adb shell uname -r` disambiguates: `7.x` is the Linux port; a 4.19 kernel is
-PBRP or Android.
 
 ```sh
 adb shell 'uname -a; id'              # root on rain-ubuntu
 adb shell dmesg -w                    # live kernel log
-adb pull /var/log/rain-boot-report.txt
+adb shell 'cat /sys/class/drm/card0-DSI-1/status'   # connected
+adb shell 'cat /sys/class/graphics/fb0/virtual_size' # 720,1650
 adb push file /usr/local/sbin/        # userspace edits need no cust reflash
 adb forward tcp:2222 tcp:22           # with: adb shell systemctl enable --now ssh
 adb exec-out cat /dev/fb0 > screen.raw
-adb shell rm /etc/rain-autoreboot     # stop the 45 s self-reboot
-adb reboot bootloader
 ```
 
-This adbd reports "authentication not required"; the host key is a fallback.
-`make adb` never flashes or changes the phone.
+This adbd reports "authentication not required"; the rootfs build installs
+this host's key as a fallback.
 
 ---
 
 ## Host prerequisites
 
-- macOS + OrbStack (arm64, 8 cores) or Linux; `adb`, `fastboot`.
-- ~20 GB free; two docker images from `build/Dockerfile` / `build/Dockerfile.rootfs`.
+- macOS + Docker (arm64; the build is native, no qemu) or Linux; `adb`,
+  `fastboot`, `gh` (firmware release download).
+- ~25 GB free (kernel source/build + 26.04 image + sparse image).
 - Docker state must stay inside the workspace:
 
 ```sh
 export DOCKER_CONFIG="$PWD/.docker"
 ```
 
+`make base` builds the `fog-v730` container (Ubuntu 24.04 + gcc, dtc, zstd,
+e2fsprogs, rsync, img2simg, sudo).
+
 ---
 
-## Reproduce the build (verified commands)
+## Reproduce the build (v7.3.0, verified 2026-11-02)
 
-### 1. Kernel source + patch
+Everything is driven by `make`; each step is idempotent.
+
+### 0. One-time base
 
 ```sh
-cd Redmi10c-base
-curl -LO https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.1.5.tar.xz
-tar -xf linux-7.1.5.tar.xz -C mainline/ && mv mainline/linux-7.1.5 mainline/linux-7.1.y
-cd mainline/linux-7.1.y
-patch -p1 --batch < ../../patches/redmi10c-mainline-20260813.patch
-# fog-specific USB/adb fix (32-bit DWC3 DMA + real PHY rails):
-patch -p1 --batch < ../../../patches/fog-adb-usb.patch
+make base
 ```
 
-`make patch` applies `patches/fog-adb-usb.patch` idempotently, and
-`make kernel` / `make image` depend on it.
+- worktree `Redmi10c-base/v730` at `origin/v7.3.0`
+- firmware `firmware-2026.09.25` (61 MB) → `initramfs/lib/firmware`,
+  `vendor-qcom/`, `sensors/`
+- Ubuntu 26.04 cloud rootfs (241 MB) → `rootfs/cache/`
+- container `fog-v730`
 
-**Gotchas**
-
-- Use `patch -p1`, **not** `git apply`: inside this clone `git apply` resolves
-  paths against the repo root and silently sprays files into `Redmi10c-base/`.
-- Our unit is `fog` and reports `qcom,board-id = <0x40022>`; the repo DTS
-  hardcodes `<0x60022>` (their `rain`). Fix before building or the kernel dies
-  with no USB and no console:
+### 1. Kernel
 
 ```sh
-sed -i '' 's/qcom,board-id = <0x60022 0x00>/qcom,board-id = <0x40022 0x00>/' \
-  arch/arm64/boot/dts/qcom/sm6225-xiaomi-fog.dts
+make kernel
 ```
 
-### 2. Kernel + DTB
+- `kernel.patch` on a **linux-7.3** tarball (tag `v7.3`; the tarball is used
+  because a shallow git clone from kernel.org took >30× longer here)
+- our fog deltas via `tools/v730-fog-dts.py`:
+  - `qcom,board-id` `0x60022` → `0x40022`
+  - HS-PHY: `vdda-pll` = PM6125 **L4** 0.88 V (upstream also binds it to L12),
+    L12 pinned 1.8 V, L15 pinned 3.232 V, `xo_board` ref only (no `cfg_ahb`)
+- `Image.gz`, `dtbs`, `modules modules_install`
+
+Verified: `Image.gz` 9.8 MB, DTB 51 KB, `board-id 0x40022`;
+upstream's `snps,dis-64bit-dma` (in `sm6225.dtsi`) supplies the 32-bit DMA
+cap that we used to carry as a local patch.
+
+### 2. Boot image
 
 ```sh
-cd Redmi10c-base
-mkdir -p out/linux-7.1.5 && cp configs/rain-fog-working.config out/linux-7.1.5/.config
-docker run --rm -v "$PWD":/src -w /src fog-build:latest bash -lc '
-  make -C mainline/linux-7.1.y O=/src/out/linux-7.1.5 ARCH=arm64 \
-    CROSS_COMPILE=aarch64-linux-gnu- -j8 olddefconfig Image.gz dtbs'
+make image
+make verify
 ```
 
-### 3. busybox (static aarch64)
+`rootfs/tools/pack-boot-linux.sh` packs kernel + pivot initramfs (88 MB
+firmware → 42 MB cpio.zst) → **52.07 MiB**, header v2. `make verify` checks
+header, DTB magic, board-id and `xiaomi,fog`.
+
+### 3. Rootfs (Ubuntu 26.04 on cust)
 
 ```sh
-docker run --rm -v "$PWD":/src -w /src/tools/busybox-src fog-build:latest bash -lc '
-  cp ../../configs/busybox-1.36.1.config .config
-  make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j8 oldconfig busybox
-  mkdir -p ../../out/initramfs-root/bin
-  cp busybox ../../out/initramfs-root/bin/busybox'
+make rootfs          # IMG_SIZE_MB=1800 by default
 ```
 
-### 4. Boot image (header v2)
+Runs upstream's `rootfs/build-rootfs.sh` in a privileged arm64 container:
+26.04 cloud image → chroot apt (~200 packages) → `rain-overlay` (82 files) →
+ext4 1800 MB + sparse. The only local change is `OUT` being overridable so
+the tree is built on the container's disk (mknod is denied on the macOS bind
+mount).
 
-Must run **inside the container** — `pack-ubuntu-boot.sh` executes the
-aarch64 `busybox` to enumerate applets, which fails on the Mac host.
+Verified: `PRETTY_NAME="Ubuntu 26.04.1 LTS"`, sparse 1.5 GB, boots to
+`adb shell` as root.
+
+### 4. Boot test
 
 ```sh
-mkdir -p out/ubuntu-dualboot/twrp/images
-docker run --rm -v "$PWD":/src -w /src fog-build:latest bash tools/pack-ubuntu-boot.sh
-# -> out/ubuntu-dualboot/boot-linux.img (~18.35 MiB)
+make test            # RAM boot: fastboot boot, wait adb, capture, return to fastboot
 ```
 
-Verify: header version 2, kernel ≈18 MB, dtb ≈29 KB, `board-id = <0x40022>`.
+Writes `docs/.scratch/adb-check.txt` (identity, systemd, display, touch,
+wifi). No slot is written, so the retry counter cannot be burned.
 
-### 5. Rootfs (Ubuntu 24.04 on cust)
+`make test-slot` is the legacy flash path; avoid it (see AGENTS.md §5).
 
-debootstrap **must** target a docker volume: the macOS bind mount breaks
-`tar`/hardlinks mid-extraction (`Tried to extract package, but tar failed`).
-
-```sh
-docker volume create fogrf
-docker run --rm -v fogrf:/rf fog-rootfs:latest \
-  debootstrap --arch=arm64 noble /rf/rootfs http://ports.ubuntu.com/ubuntu-ports
-
-# repo provisioning script, with shims (no sudo/qemu in container; native arm64)
-docker run --rm --privileged -v "$PWD":/src -v fogrf:/src/out/ubuntu-dualboot \
-  -w /src -e DEBIAN_FRONTEND=noninteractive fog-rootfs:latest bash -lc '
-    cp /bin/true /usr/bin/qemu-aarch64
-    printf "#!/bin/sh\nexec \"\$@\"\n" > /usr/local/bin/sudo; chmod +x /usr/local/bin/sudo
-    bash tools/build-ubuntu-dualboot.sh'
-```
-
-The script leaves chroot `/proc` and `/sys` mounted, so its own rsync fails
-(code 23) and produces an incomplete image. Rebuild the image with excludes:
+### 5. vbmeta_b (already done once; only for slot boot)
 
 ```sh
-docker run --rm --privileged -v "$PWD/out/ubuntu-dualboot":/out -v fogrf:/rf \
-  fog-rootfs:latest bash -lc '
-    IMG=/out/linux_rootfs.img; rm -f "$IMG" /out/linux_rootfs.sparse.img
-    dd if=/dev/zero of="$IMG" bs=1M count=1800 status=none
-    mkfs.ext4 -q -L rain-ubuntu -O ^metadata_csum_seed "$IMG"
-    mkdir -p /mnt/root && mount -o loop "$IMG" /mnt/root
-    rsync -aHAX --numeric-ids --exclude=/proc/* --exclude=/sys/* \
-      --exclude=/dev/* --exclude=/tmp/* --exclude=/run/* /rf/rootfs/ /mnt/root/
-    umount /mnt/root
-    img2simg "$IMG" /out/linux_rootfs.sparse.img'
-```
-
-Gate: `/sbin/init` resolves to `/usr/lib/systemd/systemd` inside the image.
-
-### 6. vbmeta_b (verification disabled)
-
-README Step 6 omits this command, but the stock `vbmeta_b` verifies and
-**silently rejects** an unsigned `boot_b` — ABL then falls back to Android.
-
-```sh
-python3 ../tools/avb/avbtool.py make_vbmeta_image --flags 2 \
-  --padding_size 4096 --output out/ubuntu-dualboot/vbmeta_b.img
+python3 tools/avb/avbtool.py make_vbmeta_image --flags 2 \
+  --padding_size 4096 --output Redmi10c-base/v730/rootfs/out/vbmeta_b.img
+fastboot flash vbmeta_b ...
 ```
 
 ---
 
-## Flash (slot B only)
+## Flash (RAM boot is the default)
 
 ```sh
-fastboot erase dtbo_b
-fastboot flash boot_b   out/ubuntu-dualboot/boot-linux.img
-fastboot flash vbmeta_b out/ubuntu-dualboot/vbmeta_b.img
-fastboot flash cust     out/ubuntu-dualboot/linux_rootfs.sparse.img
-fastboot --set-active=b
-fastboot reboot
+fastboot boot Redmi10c-base/v730/rootfs/out/boot-linux.img   # no slot write
+fastboot flash cust Redmi10c-base/v730/rootfs/out/linux_rootfs.sparse.img
 ```
 
-Boot takes ~20–25 s. Success signal is the framebuffer console and, once
-adbd starts, `adb devices` → `rain device`. Login: `root` / `rain`; adb
-needs no keyboard.
+For a persistent slot-B install (only if RAM boot is refused): erase
+`dtbo_b`, flash `boot_b` + `vbmeta_b` + `cust`, `--set-active=b`, reboot.
+Read AGENTS.md §5 first — a failed slot boot burns one of 7 retries.
+
+Boot takes ~35 s to adb. Success: `adb devices` → `rain device`, display
+shows the fbcon console, `card0-DSI-1` is `connected`.
 
 ---
 
@@ -194,23 +165,40 @@ needs no keyboard.
 
 | Symptom | Cause |
 | --- | --- |
-| No USB, no adb, no fastboot, screen dark/hung | ABL rejected our DTB or kernel panicked early — check `qcom,board-id` (0x40022) and that `boot_b` is header v2 |
-| Comes up as Android (`product:fog_eea`, kernel 4.19) | **usually the slot retry counter, not vbmeta** — see below; check `getvar slot-retry-count:b` |
-| Boots, no `adb` | `systemctl status usb-adb-gadget adbd`, `cat /sys/class/udc/*/state`, `/var/log/rain-boot-report.txt`; `make logs` after a test |
+| No USB, no adb, no fastboot, screen dark | ABL rejected the DTB (board-id?) or early panic — check `make verify` |
+| Comes up as Android (`product:fog_eea`, kernel 4.19) | **slot retry counter**, not vbmeta — see below |
+| Boots, no adb | `systemctl status adbd usb-adb-gadget`, `cat /sys/class/udc/*/state` |
+| adb up, no touch | FTS firmware download fails (see known issues) |
+| `systemctl is-system-running` = starting | `systemctl list-jobs`; `rain-gps.service` blocks for a minute without network |
+| `qbootctl.service` failed | normal for RAM boot — there is no boot slot to mark good |
 
 ### Slot retry counter (the silent fallback)
 
-`fastboot --set-active=b` is not just a flag flip: it sets
-`slot-retry-count:b = 7`, clears `slot-unbootable:b`, **and reboots straight
-into slot B**. ABL decrements the counter on every attempt; a kernel that dies
-before userspace (no boot_control HAL to call `markBootSuccessful`) burns all
-7 retries in a few seconds and ABL then boots slot A — which looks exactly
-like "our image was rejected", but is a crash loop.
+`fastboot --set-active=b` sets `slot-retry-count:b = 7`, clears
+`slot-unbootable:b`, and reboots into slot B. ABL decrements on every
+attempt; a kernel that dies before userspace (no `markBootSuccessful`) burns
+all 7 in seconds, then ABL boots Android — which looks like "image rejected".
+Check `fastboot getvar slot-retry-count:b` (7 fresh, 0 exhausted). Prefer
+RAM boot: it writes no slot.
 
-Verify with `fastboot getvar slot-retry-count:b` (7 = fresh, 0 = exhausted)
-and `slot-unbootable:b`. Before every slot-B test, re-run
-`fastboot --set-active=b`; expect a ~90 s round trip when the image does not
-come up.
+### Known issues (v7.3.0 on this unit)
+
+- **Touch**: `fts_ts` probes, input device appears, but
+  `fts_read: crc abnormal, status c3` and `boot id 0x00 0x00` at boot. The
+  initramfs ships upstream's `focaltech_ts_fw_xinli.bin` (their unit). Next
+  step: pull `/vendor/firmware/focaltech_ts_fw_xinli.bin` from *this* phone
+  (PBRP + super partition) and compare; if identical, look at SPI bitbang
+  timing.
+- **`regulatory.db`**: missing from the initramfs (cfg80211 loads it before
+  `switch_root`); Wi-Fi still scans. Add `wireless-regdb` to the build image
+  and copy it into the initramfs.
+- **WLAN MAC**: upstream DTS hardcodes an OEM WLAN MAC ("OEM WLAN MAC from
+  Android") — that is *their* unit's MAC. Replace with ours from
+  `persist/wlan_mac.bin`, or remove the property.
+- **Bluetooth**: `hci0: Frame reassembly failed (-84)` at boot; not
+  investigated.
+- **GPS**: `rain-gps.service` runs, XTRA fetch fails without network; the
+  service blocks `is-system-running` for ~60 s.
 
 ---
 
@@ -227,15 +215,11 @@ come up.
 `boot_a`, `persist`, `modemst*`, `fsg`, `fsc`, `devinfo`.
 
 **SIMs:** provisioning lives in `modemst1/2`, `fsg`, `fsc`, `persist` — none
-written by this runbook. Linux has no modem driver; calls/SMS/data only in
-slot A.
+written by this runbook.
 
 ---
 
-## Reading Linux logs without any console
-
-The phone writes `/var/log/rain-boot-report.txt` inside `cust` on every boot.
-With no USB console, read it through recovery instead of the screen:
+## Reading Linux logs without a console
 
 ```sh
 fastboot boot reference/pbrp-fog-boot.img      # RAM boot, writes no slot
@@ -244,78 +228,34 @@ adb shell 'mkdir -p /cust && mount -t ext4 -o ro /dev/block/sda8 /cust && \
            cat /cust/var/log/rain-boot-report.txt; umount /cust'
 ```
 
-This is also how to iterate: flash → boot → power-cycle to fastboot →
-RAM-boot PBRP → pull log. `fastboot boot` can fail with
-`Status read failed`; retry after `adb reboot bootloader`.
-Android does not expose `/dev/mem`, so register dumps are only possible in Linux.
+The 26.04 rootfs has no `rain-autoreboot`/report service any more, so
+`make test` talks to adb directly and returns to fastboot with the
+`rain-reboot-bootloader` helper (systemd's `/sbin/reboot` cannot pass a
+reboot reason; the helper issues `reboot(2)` with `RESTART2 "bootloader"`).
 
-## Automation (no screen-watching)
+## Automation
 
-- `tools/watch-boot.sh` — classify a boot: `LINUX` (serial gadget + probe),
-  `ANDROID` (ABL fallback, prints product/release), `FASTBOOT`, or `HUNG`
-  (timeout). Flags: `--flash`, `--reboot`, `--timeout`, `--no-probe`.
-- `tools/serial-probe.py` — stdlib-only CDC-ACM probe (`/dev/cu.usbmodem*`),
-  runs commands and prints output.
-- Rootfs overlay in `build/overlay/` (installed into the ext4 image):
-  - `usb-gadget.service` / `usb-gadget.sh` — binds the UDC as CDC-ACM.
-  - `usb-force.service` / `usb-force.py` — re-applies the repo's PHY/GDSC
-    pokes from userspace before binding.
-  - `getty@ttyGS0` override — root autologin on the serial console.
-  - `rain-boot-report.service` — writes USB/gadget diagnostics to VT 2 so a
-    human can read them without a keyboard; copy in `/var/log/rain-boot-report.txt`.
-  - `rain-reboot-bootloader` — static aarch64 helper that reboots to fastboot
-    (`reboot(2)` with the `"bootloader"` reason). Not in git; rebuild inside
-    `fog-build` with
-    `aarch64-linux-gnu-gcc -static -O2 -o rain-reboot-bootloader rain-reboot-bootloader.c`.
-- `fastboot --set-active=<slot>` costs **~90 s** on this unit (ABL slot
-  rewrite); skip it when the slot is already current — flash + `fastboot
-  reboot` is ~13 s.
+- `make test` / `tools/testboot-loop.sh` — RAM boot, wait for adb, capture
+  identity/display/touch/wifi into `docs/.scratch/adb-check.txt`, return to
+  fastboot. `RAM_BOOT=0` selects the legacy slot path.
+- `tools/watch-boot.sh` — classify a boot (`LINUX`/`ANDROID`/`FASTBOOT`/`HUNG`).
+- `tools/serial-probe.py` — stdlib CDC-ACM probe (legacy ACM console).
 
-## USB / adb (resolved 2026-11-02)
+## USB / adb
 
-`adb devices` shows `rain device`; `adb shell` is root. The UDC reports
-`configured` and `endpoint-event spam: 0`. Two independent faults had to go:
+Upstream `v7.3.0` carries the 32-bit DMA cap as `snps,dis-64bit-dma` in
+`sm6225.dtsi` and force-enables the GCC USB clocks/GDSC in the femto driver.
+Our `fog` delta on top is the HS-PHY supply map (L4 0.88 V for `vdda-pll`,
+L12 1.8 V, L15 3.232 V, no `cfg_ahb`): upstream binds `vdda-pll` to L12 too,
+which on this unit leaves the PHY without its 0.88 V core rail.
 
-1. **DT ownership.** USB must use the upstream *thin* DT: bare
-   `snps,dwc3`, femto PHY with the XO ref, and the USB clocks in
-   `protected-clocks`. QSCRATCH/GDSC/AHB2PHY are driven by the femto
-   driver's `force_usb_clks()` and by initramfs. A `qcom,dwc3` glue node
-   that claimed GCC clocks/GDSC/BCR kept the controller running but never
-   completed endpoint events. (That glue was our addition; upstream
-   deliberately omits it.)
-2. **64-bit DMA placement.** `GHWPARAMS0.AWIDTH = 64`, so dwc3 set a 64-bit
-   DMA mask and the event ring landed at `0x1_022fc000`. This USB master
-   never wrote there: every event read back as zero
-   (`unknown endpoint event 0`), ep0 never completed and the host never
-   enumerated. `snps,force-32bit-dma` (`patches/fog-adb-usb.patch`) moves
-   the ring to `0x43800000`; spam drops 111 → 0 and adbd binds.
+Historical dead ends (do not re-run):
 
-Userspace: `usb-adb-gadget.service` builds `g1` with `ffs.adb`, then
-`adbd.service` runs Debian's `adbd`. Ubuntu noble has no adbd package;
-`tools/fetch-adbd-debs.sh` stages trixie arm64 debs and `make rootfs`
-installs them. This adbd build reports "authentication not required";
-`make rootfs` still installs this host's key at `/data/misc/adb/adb_keys`.
-
-The image self-reboots 45 s after the boot report
-(`/etc/rain-autoreboot`). For a persistent adb session:
-
-```sh
-adb shell rm /etc/rain-autoreboot
-```
-
-Historical dead ends (kept so they are not re-run):
-
-- EUD is not hijacking the port (`0x1611014`, `0x1612000` read 0).
-- `DWC3_DCTL_RUN_STOP` is **bit 31**; `DCTL = 0x80f00000` means running.
-- Never stop/start DCTL (`0x4e0c704`) from userspace while a gadget is
-  bound; it restarts the controller behind dwc3 and corrupts the ring.
-- `DSTS.USBLNKST` alone is not evidence (0 vs 3 varies with host retries);
-  trust `udc state: configured` plus a host-side `adb devices`.
-
-- The sm6115 board (`sm6225-xiaomi-fog-sm6115.dts`, "thin" image) is **not**
-  a viable test vehicle: it crash-loops before userspace (burns the whole
-  slot retry counter in ~90 s) and, with UFS and GPU disabled, it has no
-  rootfs, no report file and no `ramoops` node, so it cannot log anything.
-  Test USB on `sm6225-xiaomi-fog.dts`, which boots and reports.
-- GPU scanout, audio, modem, camera, GPS, fingerprint, NFC — as upstream
-  `STATUS.md`.
+- Never stop/start `DCTL` from userspace while a gadget is bound.
+- `DWC3_DCTL_RUN_STOP` is **bit 31**.
+- `DSTS.USBLNKST` alone is not evidence; trust `udc state: configured` plus
+  host-side `adb devices`.
+- `qcom,dwc3` glue claiming GCC clocks/GDSC/BCR leaves the controller
+  running but endpoint events never complete — use the thin DT.
+- `sm6225-xiaomi-fog-sm6115.dts` ("thin" image) crash-loops before userspace
+  and has no log path; not a test vehicle.

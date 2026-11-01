@@ -1,59 +1,42 @@
 # SPDX-License-Identifier: GPL-2.0-only
 SHELL := /bin/bash
 BASE  := Redmi10c-base
-OUT   := $(BASE)/out/ubuntu-dualboot
-RUN   := docker run --rm --privileged -v "$(CURDIR)":/src -w /src
-SKIP_CUST ?= 0
+V730  := $(BASE)/v730
+OUT   := $(V730)/rootfs/out
+BOOT  := $(OUT)/boot-linux.img
+CUST  := $(OUT)/linux_rootfs.sparse.img
 
-.PHONY: help doctor adb patch verify kernel image rootfs adbd-debs test logs android
+.PHONY: help doctor adb base kernel image rootfs verify test test-slot logs android
 
 doctor:          ## what's missing here (images, kernel, phone)
 	@tools/doctor.sh
 
 help:            ## list targets
-	@grep -E '^[a-z][a-z-]*:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
+	@grep -E '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
 
-patch:           ## apply local kernel patches (idempotent)
-	@[ -d $(BASE)/mainline/linux-7.1.y ] || { \
-	  echo "kernel tree missing - see RUNBOOK step 1" >&2; exit 1; }
-	@if grep -q 'snps,force-32bit-dma' \
-	      $(BASE)/mainline/linux-7.1.y/arch/arm64/boot/dts/qcom/sm6225-xiaomi-fog.dts \
-	   && grep -q 'snps,force-32bit-dma' \
-	      $(BASE)/mainline/linux-7.1.y/drivers/usb/dwc3/core.c; then \
-	  echo "fog-adb-usb.patch already applied"; \
-	else \
-	  patch -p1 -d $(BASE)/mainline/linux-7.1.y < patches/fog-adb-usb.patch; \
-	fi
+base:            ## fetch v7.3.0 worktree + firmware + cloud rootfs + container
+	@tools/v730-build.sh base
+
+kernel:          ## build kernel v7.3 + our fog DTS deltas + modules
+	@tools/v730-build.sh kernel
+
+image:           ## pack boot-linux.img (pivot initramfs) and verify it
+	@tools/v730-build.sh image
+
+rootfs:          ## build the Ubuntu 26.04 cust image (sparse)
+	@tools/v730-build.sh rootfs
+
+verify:          ## sanity-check the packed boot image (header, dtb, board-id)
+	@tools/verify-image.sh $(BOOT)
 
 adb:             ## show what adb is talking to + the usage cookbook
 	@tools/adb-status.sh
 
-adbd-debs:       ## stage adbd debs + this host's adb public key
-	@tools/fetch-adbd-debs.sh
-	@mkdir -p docs/.scratch/adbd
-	@cp -f "$$HOME/.android/adbkey.pub" docs/.scratch/adbd/adbkey.pub 2>/dev/null \
-	  || echo "note: no ~/.android/adbkey.pub - run 'adb keygen' or adb will show unauthorized"
+test:            ## RAM-boot the image, check adb/display, return to fastboot
+	@BOOT_IMG=$(BOOT) tools/testboot-loop.sh
 
-kernel: patch    ## rebuild Image.gz + DTBs
-	$(RUN) fog-build:latest make -C $(BASE)/mainline/linux-7.1.y \
-	  O=/src/$(BASE)/out/linux-7.1.5 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-	  -j8 olddefconfig Image.gz dtbs
-
-verify:          ## sanity-check the packed boot image (header, dtb, board-id)
-	@tools/verify-image.sh
-
-image: patch     ## repack boot-linux.img, then verify it
-	$(RUN) fog-build:latest bash $(BASE)/tools/pack-ubuntu-boot.sh
-	@tools/verify-image.sh
-
-rootfs:          ## install build/overlay/ + adbd into the cust image
-	@ls docs/.scratch/adbd/debs/adbd_*.deb >/dev/null 2>&1 || $(MAKE) --no-print-directory adbd-debs
-	@mkdir -p docs/.scratch/adbd
-	@cp -f "$$HOME/.android/adbkey.pub" docs/.scratch/adbd/adbkey.pub 2>/dev/null || true
-	$(RUN) fog-rootfs:latest bash build/install-overlay.sh
-
-test:            ## flash, boot, wait for self-reboot, pull logs (~4 min)
-	SKIP_CUST=$(SKIP_CUST) tools/testboot-loop.sh
+test-slot:       ## legacy: flash slot B + cust, wait for self-reboot
+	@BOOT_IMG=$(BOOT) CUST_IMG=$(CUST) RAM_BOOT=0 tools/testboot-loop.sh
 
 logs:            ## summary of the last pulled boot report
 	@sed -n '1,12p' docs/.scratch/rain-boot-report.txt 2>/dev/null \

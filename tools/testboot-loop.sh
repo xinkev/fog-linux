@@ -15,8 +15,9 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BASE="$ROOT/Redmi10c-base"
 OUT="$BASE/out/ubuntu-dualboot"
-BOOT_IMG="${BOOT_IMG:-$OUT/boot-linux.img}"
-CUST_IMG="${CUST_IMG:-$OUT/linux_rootfs.sparse.img}"
+V730_BOOT="$ROOT/Redmi10c-base/v730/rootfs/out/boot-linux.img"
+BOOT_IMG="${BOOT_IMG:-$([ -f "$V730_BOOT" ] && echo "$V730_BOOT" || echo "$OUT/boot-linux.img")}"
+CUST_IMG="${CUST_IMG:-$(dirname "$BOOT_IMG")/linux_rootfs.sparse.img}"
 PBRP="$ROOT/reference/pbrp-fog-boot.img"
 SCRATCH="$ROOT/docs/.scratch"
 TIMEOUT="${TIMEOUT:-240}"
@@ -47,11 +48,84 @@ wait_fb() {
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 
+# systemd's /sbin/reboot cannot pass a reboot reason, so plain
+# `adb reboot bootloader` just does a normal reboot on the 26.04 rootfs.
+# The static helper issues reboot(2) with LINUX_REBOOT_CMD_RESTART2,
+# which ABL honours.
+reboot_to_fastboot() {
+  local h="$ROOT/build/overlay/usr/local/sbin/rain-reboot-bootloader"
+  if [ -f "$h" ] && adb push "$h" /tmp/rrb >/dev/null 2>&1; then
+    adb shell 'chmod 755 /tmp/rrb; /tmp/rrb bootloader' >/dev/null 2>&1
+  else
+    adb reboot bootloader 2>/dev/null
+  fi
+}
+
+# --- RAM-boot mode (default for the v7.3.0 image) ---------------------------
+# Writes no slot and cannot burn the slot-retry counter. There is no
+# rain-autoreboot in the 26.04 rootfs, so the loop returns the phone to
+# fastboot itself.
+run_ram_boot() {
+  local i st
+  if ! have_fb; then
+    if have_adb; then
+      log "linux/adb device present -> reboot bootloader"
+      reboot_to_fastboot
+    fi
+    wait_fb 60 || { log "FAIL: no fastboot device (power-cycle needed)"; return 2; }
+  fi
+  log "RAM boot $(basename "$BOOT_IMG") ($(du -h "$BOOT_IMG" | cut -f1))"
+  fastboot boot "$BOOT_IMG" >/dev/null 2>&1 || { log "FAIL: fastboot boot refused"; return 3; }
+
+  log "waiting up to ${TIMEOUT}s for adb"
+  st=""
+  for ((i = 0; i < TIMEOUT; i += 3)); do
+    sleep 3
+    st=$(adb devices 2>/dev/null | awk 'NR>1 && $2=="device"{print $1; exit}')
+    [ -n "$st" ] && break
+  done
+  if [ -z "$st" ]; then
+    log "FAIL: no adb after ${TIMEOUT}s (kernel or userspace did not come up)"
+    return 4
+  fi
+  log "adb up: $st"
+
+  {
+    adb devices -l
+    echo "--- identity ---"
+    adb shell 'uname -r; grep PRETTY_NAME /etc/os-release; id; cat /sys/class/udc/*/state' 2>&1
+    echo "--- systemd ---"
+    adb shell 'systemctl is-system-running; systemctl --failed --no-legend' 2>&1
+    echo "--- display ---"
+    adb shell 'cat /sys/class/drm/card0-DSI-1/status; cat /sys/class/graphics/fb0/virtual_size' 2>&1
+    echo "--- touch ---"
+    adb shell 'grep -A1 fts_ts /proc/bus/input/devices; dmesg | grep -i fts | tail -3' 2>&1
+    echo "--- wifi ---"
+    adb shell 'ip -br link show wlan0; cat /sys/class/net/wlan0/address' 2>&1
+  } >"$SCRATCH/adb-check.txt" 2>&1
+  log "wrote $SCRATCH/adb-check.txt"
+
+  log "returning to fastboot"
+  reboot_to_fastboot
+  wait_fb 90 || log "WARN: did not return to fastboot"
+  return 0
+}
+
+# --- 0. RAM boot (default) or legacy slot flash ----------------------------
+case "${RAM_BOOT:-auto}" in
+  1) run_ram_boot; exit $? ;;
+  0) ;;
+  auto)
+    if [ -f "$V730_BOOT" ] && [ "$(cd "$(dirname "$BOOT_IMG")" && pwd)/$(basename "$BOOT_IMG")" = "$V730_BOOT" ]; then
+      run_ram_boot; exit $?
+    fi ;;
+esac
+
 # --- 1. get to fastboot -----------------------------------------------------
 if ! have_fb; then
-  if in_recovery || in_android; then
+  if have_adb; then
     log "adb device present -> reboot bootloader"
-    adb reboot bootloader 2>/dev/null
+    reboot_to_fastboot
   fi
   wait_fb 60 || { log "FAIL: no fastboot device (power-cycle needed)"; exit 2; }
 fi
