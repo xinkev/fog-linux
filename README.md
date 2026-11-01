@@ -3,12 +3,13 @@
 Repo: `git@github.com:xinkev/fog-linux.git` · open work lives in **Issues**.
 
 Linux boots on slot **B**; stock MIUI stays on slot **A** as the fallback.
-One blocker left: USB never enumerates.
+**adb over USB works** (root shell), as does the framebuffer console.
 
 | Works | Broken |
 |---|---|
-| Ubuntu 24.04 from `cust`, framebuffer console + login | USB gadget — no adb, no serial console |
-| Test boot returns to fastboot by itself; logs pulled via PBRP | GPU scanout, audio, modem, camera, GPS, sensors |
+| Ubuntu 24.04 from `cust`, framebuffer console + login | USB ACM serial console (the ADB gadget owns the UDC) |
+| **adb over USB** — `adb devices` → `rain device`, root shell | GPU scanout, audio, modem, camera, GPS, sensors |
+| Test boot returns to fastboot by itself; logs pulled via PBRP | |
 | Android on slot A untouched, 2 SIMs intact | |
 
 Roadmap: **P2** grow `cust` → ~20 GB · **P3** Wi-Fi/BT/display/touch · **P4** GPU, audio, modem.
@@ -20,36 +21,41 @@ make doctor      # what exists here, what the phone is doing
 gh issue list    # open work, newest decisions in the issue bodies
 ```
 
-Then read **RUNBOOK → Known gaps** before changing anything about USB: it lists
-what has already been disproved, so you don't re-run dead experiments.
+Then read **RUNBOOK → USB / adb** before changing anything about USB: it has
+the root cause (32-bit DWC3 DMA), the userspace stack, and the dead ends.
 
 ## Start here
 
 ```
 make doctor   # what is missing on this machine / phone
-make test     # flash -> boot -> self-reboot -> pull logs
-make logs     # what the last boot reported
+make test     # flash -> boot -> adb check -> self-reboot -> pull logs
+adb devices   # during the boot window: "rain device"
 ```
+
+The image self-reboots 45 s after its boot report; `adb shell rm
+/etc/rain-autoreboot` keeps it up.
 
 ## Commands
 
 | Command | Does |
 |---|---|
 | `make doctor` | preflight: docker images, kernel, images, phone state |
-| `make test` | flash → boot → self-reboot → pull logs (unattended, ~4 min) |
+| `make test` | flash → boot → adb check → self-reboot → pull logs (~4 min) |
+| `make test SKIP_CUST=1` | same, without the slow `cust` flash (~2 min) |
 | `make logs` | summary of the last pulled boot report |
-| `make rootfs` | install `build/overlay/` into the `cust` image |
+| `make rootfs` | install `build/overlay/` + adbd into the `cust` image |
+| `make adbd` | stage adbd debs and this host's adb public key |
 | `make image` | rebuild `boot-linux.img`, then verify it |
 | `make verify` | check header, DTB and board-id before flashing |
 | `make kernel` | rebuild kernel + DTBs |
+| `make patch` | apply `patches/fog-adb-usb.patch` (idempotent) |
 | `make android` | back to stock MIUI |
-
-`make test` reflashes `cust` too; `make test SKIP_CUST=1` skips that (~2 min).
 
 ## Layout
 
 ```
-tools/        doctor, testboot-loop, watch-boot, serial-probe
+tools/        doctor, testboot-loop, watch-boot, serial-probe, fetch-adbd-debs
+patches/      fog-adb-usb.patch (applied on top of the upstream kernel patch)
 build/        Dockerfiles + overlay/ (units, scripts installed into cust)
 docs/         CHANGELOG (why) · .scratch/ (logs, plans — gitignored)
 RUNBOOK.md    how to build, flash, recover, read logs    <- reference

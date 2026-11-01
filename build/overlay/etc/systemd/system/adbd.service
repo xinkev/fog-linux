@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Android Debug Bridge daemon (USB FunctionFS)
+After=usb-adb-gadget.service local-fs.target
+Requires=usb-adb-gadget.service
+Conflicts=usb-gadget.service usb-force.service
+
+[Service]
+# simple, not notify: ExecStartPost must run right after adbd opens ep0; the
+# bind helper waits for ep1 itself. Same flow as the proven upstream unit.
+Type=simple
+Environment=HOME=/var/lib/adbd
+ExecStartPre=/bin/mkdir -p /var/lib/adbd /data/misc/adb /dev/usb-ffs/adb
+# adbd opens /dev/usb-ffs/adb/ep0 and writes its descriptors, then waits.
+ExecStart=/usr/sbin/adbd
+# Bind the UDC only once ep1/ep1out exist.
+ExecStartPost=/usr/local/sbin/usb-adb-gadget.sh bind
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=USB ADB FunctionFS gadget (host adb <-> phone adbd)
+DefaultDependencies=no
+After=sys-kernel-config.mount local-fs.target
+Wants=sys-kernel-config.mount
+Before=adbd.service
+Conflicts=usb-gadget.service usb-force.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/usb-adb-gadget.sh setup
+# Never restart: rebind storms hang SM6225.
+TimeoutStartSec=40
+
+[Install]
+WantedBy=multi-user.target

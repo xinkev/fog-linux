@@ -44,7 +44,12 @@ curl -LO https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.1.5.tar.xz
 tar -xf linux-7.1.5.tar.xz -C mainline/ && mv mainline/linux-7.1.5 mainline/linux-7.1.y
 cd mainline/linux-7.1.y
 patch -p1 --batch < ../../patches/redmi10c-mainline-20260813.patch
+# fog-specific USB/adb fix (32-bit DWC3 DMA + real PHY rails):
+patch -p1 --batch < ../../../patches/fog-adb-usb.patch
 ```
+
+`make patch` applies `patches/fog-adb-usb.patch` idempotently, and
+`make kernel` / `make image` depend on it.
 
 **Gotchas**
 
@@ -240,34 +245,51 @@ Android does not expose `/dev/mem`, so register dumps are only possible in Linux
   rewrite); skip it when the slot is already current — flash + `fastboot
   reboot` is ~13 s.
 
-## Known gaps after first light
+## USB / adb (resolved 2026-11-02)
 
-- **USB gadget does not enumerate.** Software side is correct (`udc:
-  4e00000.usb`, gadget bound, `gettyGS0: active`) but `udc state` stays
-  `not attached` and the host never enumerates.
-  - **Ruled out (2026-11-01):** EUD hijack. Downstream DT puts
-    `qcom,msm-eud@1610000` at `reg = <0x1610000 0x2000>, <0x1612000 0x1000>`,
-    and both `EUD_CSR_EUD_EN` (0x1611014) and `EUD_EN2` (0x1612000) read 0 on
-    a live boot — the debug block is not stealing the port. Those pages are
-    still safe to read (they are unclaimed by mainline, so keep the read last
-    and after a `sync`, as `boot-report.sh` does).
-  - **Controller is running:** `DWC3_DCTL_RUN_STOP` is **bit 31**, not bit 0
-    (`drivers/usb/dwc3/core.h`). `DCTL = 0x80f00000` means running; decoding
-    bit 0 makes it look halted and sends you chasing a non-bug.
-  - **Do not stop/start `DCTL` from userspace.** `usb-force.py` used to clear
-    and re-set RUN_STOP "to hand the controller back to the driver" — that
-    restarts the controller behind dwc3's back, leaves the event ring stale,
-    and produces the `unknown endpoint event 0` storm. Removing it dropped the
-    spam from 82 to 21 occurrences per boot. Never write `0x4e0c704` from
-    userspace while a gadget is bound.
-  - **Open:** `DSTS.USBLNKST` reads `0 (on)` with a non-zero `SOFFN` on some
-    boots and `3 (disconnected)` on others, i.e. the PHY does assert D+ at
-    least briefly, but the host never sees a device — consistent with a stale
-    event ring / failed control endpoint rather than a dead PHY.
-  - The sm6115 board (`sm6225-xiaomi-fog-sm6115.dts`, "thin" image) is **not**
-    a viable test vehicle: it crash-loops before userspace (burns the whole
-    slot retry counter in ~90 s) and, with UFS and GPU disabled, it has no
-    rootfs, no report file and no `ramoops` node, so it cannot log anything.
-    Test USB on `sm6225-xiaomi-fog.dts`, which boots and reports.
+`adb devices` shows `rain device`; `adb shell` is root. The UDC reports
+`configured` and `endpoint-event spam: 0`. Two independent faults had to go:
+
+1. **DT ownership.** USB must use the upstream *thin* DT: bare
+   `snps,dwc3`, femto PHY with the XO ref, and the USB clocks in
+   `protected-clocks`. QSCRATCH/GDSC/AHB2PHY are driven by the femto
+   driver's `force_usb_clks()` and by initramfs. A `qcom,dwc3` glue node
+   that claimed GCC clocks/GDSC/BCR kept the controller running but never
+   completed endpoint events. (That glue was our addition; upstream
+   deliberately omits it.)
+2. **64-bit DMA placement.** `GHWPARAMS0.AWIDTH = 64`, so dwc3 set a 64-bit
+   DMA mask and the event ring landed at `0x1_022fc000`. This USB master
+   never wrote there: every event read back as zero
+   (`unknown endpoint event 0`), ep0 never completed and the host never
+   enumerated. `snps,force-32bit-dma` (`patches/fog-adb-usb.patch`) moves
+   the ring to `0x43800000`; spam drops 111 → 0 and adbd binds.
+
+Userspace: `usb-adb-gadget.service` builds `g1` with `ffs.adb`, then
+`adbd.service` runs Debian's `adbd`. Ubuntu noble has no adbd package;
+`tools/fetch-adbd-debs.sh` stages trixie arm64 debs and `make rootfs`
+installs them. This adbd build reports "authentication not required";
+`make rootfs` still installs this host's key at `/data/misc/adb/adb_keys`.
+
+The image self-reboots 45 s after the boot report
+(`/etc/rain-autoreboot`). For a persistent adb session:
+
+```sh
+adb shell rm /etc/rain-autoreboot
+```
+
+Historical dead ends (kept so they are not re-run):
+
+- EUD is not hijacking the port (`0x1611014`, `0x1612000` read 0).
+- `DWC3_DCTL_RUN_STOP` is **bit 31**; `DCTL = 0x80f00000` means running.
+- Never stop/start DCTL (`0x4e0c704`) from userspace while a gadget is
+  bound; it restarts the controller behind dwc3 and corrupts the ring.
+- `DSTS.USBLNKST` alone is not evidence (0 vs 3 varies with host retries);
+  trust `udc state: configured` plus a host-side `adb devices`.
+
+- The sm6115 board (`sm6225-xiaomi-fog-sm6115.dts`, "thin" image) is **not**
+  a viable test vehicle: it crash-loops before userspace (burns the whole
+  slot retry counter in ~90 s) and, with UFS and GPU disabled, it has no
+  rootfs, no report file and no `ramoops` node, so it cannot log anything.
+  Test USB on `sm6225-xiaomi-fog.dts`, which boots and reports.
 - GPU scanout, audio, modem, camera, GPS, fingerprint, NFC — as upstream
   `STATUS.md`.

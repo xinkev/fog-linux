@@ -102,11 +102,30 @@ done
 sleep 12
 start=$(date +%s)
 returned=0
+adb_hit=0
 while :; do
   now=$(date +%s); elapsed=$((now - start))
   [ "$elapsed" -ge "$TIMEOUT" ] && break
   if have_fb; then returned=1; break; fi
   if in_android; then log "ANDROID fallback: slot B boot failed (retry counter exhausted)"; break; fi
+  # A Linux-boot adbd shows up as device/unauthorized/offline. Capture it
+  # before rain-autoreboot (45 s after the report) takes the phone away.
+  if [ "$adb_hit" -eq 0 ] && ! in_recovery && ! in_android; then
+    st=$(adb devices 2>/dev/null | awk 'NR>1 && NF {print $2; exit}')
+    if [ -n "$st" ]; then
+      adb_hit=1
+      log "ADB DEVICE PRESENT state=$st"
+      {
+        adb devices -l
+        echo "--- adb shell ---"
+        adb shell 'uname -a; id; cat /sys/class/udc/*/state 2>/dev/null; ls -l /dev/usb-ffs/adb 2>/dev/null' 2>&1
+      } >"$SCRATCH/adb-check.txt" 2>&1 &
+      pid=$!
+      for _ in $(seq 1 15); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+      kill "$pid" 2>/dev/null || true
+      log "wrote $SCRATCH/adb-check.txt"
+    fi
+  fi
   sleep 3
 done
 
@@ -141,9 +160,15 @@ if have_fb; then
 fi
 
 # --- 5. summary -------------------------------------------------------------
+if [ -f "$SCRATCH/adb-check.txt" ]; then
+  echo "----- adb check -----"
+  cat "$SCRATCH/adb-check.txt"
+  echo "---------------------"
+fi
 if [ -f "$SCRATCH/rain-boot-report.txt" ]; then
   echo "----- report summary -----"
-  grep -E '^(udc state|usb-gadget)|DSTS|GSNPSID|PHY6c' "$SCRATCH/rain-boot-report.txt" | head -8
+  grep -E '^(udc state|usb-gadget|usb-adb-gadget|adbd|ffs|adb keys)|DSTS|GSNPSID|PHY6c' \
+    "$SCRATCH/rain-boot-report.txt" | head -12
   echo "--------------------------"
 fi
 exit 0

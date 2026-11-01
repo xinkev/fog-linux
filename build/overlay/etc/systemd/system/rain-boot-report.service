@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 [Unit]
 Description=Rain boot report on VT2 (USB/gadget diagnostics)
-After=usb-gadget.service getty@ttyGS0.service multi-user.target
-Wants=usb-gadget.service
+After=usb-adb-gadget.service adbd.service multi-user.target
+Wants=usb-adb-gadget.service adbd.service
 
 [Service]
 Type=oneshot

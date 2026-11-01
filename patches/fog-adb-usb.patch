@@ -1,0 +1,100 @@
+From: xinkev <xinkev@users.noreply.github.com>
+Subject: [PATCH] fog: make adb over USB work (32-bit DWC3 DMA + PHY rails)
+
+Applies on top of the upstream Redmi10c patch (20260813 or 20260831).
+Root cause: DWC3 GHWPARAMS0 reports AWIDTH=64, so the driver sets a
+64-bit DMA mask and the event ring lands above 4 GiB (GEVNTADRHI=1).
+This USB master cannot write there: every endpoint event reads back
+as zero ('unknown endpoint event 0'), ep0 never completes, and the
+host never enumerates. Forcing 32-bit coherent DMA moves the ring to
+0x43800000; the storm drops to 0 and adb enumerates.
+
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -2288,11 +2288,27 @@
+ 	dev_set_drvdata(dev, dwc);
+ 	dwc3_cache_hwparams(dwc);
+ 
+-	if (!dev_is_pci(dwc->sysdev) &&
+-	    DWC3_GHWPARAMS0_AWIDTH(dwc->hwparams.hwparams0) == 64) {
+-		ret = dma_set_mask_and_coherent(dwc->sysdev, DMA_BIT_MASK(64));
+-		if (ret)
+-			goto err_disable_clks;
++	if (!dev_is_pci(dwc->sysdev)) {
++		u64 dma_mask = 0;
++
++		/*
++		 * Some Qualcomm integrations report a 64-bit AWIDTH but only
++		 * forward/implement 32 address bits on the USB master. Event
++		 * ring and TRB pools then land above 4 GiB, the controller's
++		 * writes never reach them, and every event reads back as zero
++		 * ("unknown endpoint event 0", no enumeration). Let the board
++		 * DT force 32-bit coherent allocations in that case.
++		 */
++		if (of_property_read_bool(dev->of_node, "snps,force-32bit-dma"))
++			dma_mask = DMA_BIT_MASK(32);
++		else if (DWC3_GHWPARAMS0_AWIDTH(dwc->hwparams.hwparams0) == 64)
++			dma_mask = DMA_BIT_MASK(64);
++
++		if (dma_mask) {
++			ret = dma_set_mask_and_coherent(dwc->sysdev, dma_mask);
++			if (ret)
++				goto err_disable_clks;
++		}
+ 	}
+ 
+ 	/*
+--- a/arch/arm64/boot/dts/qcom/sm6225-xiaomi-fog.dts
++++ b/arch/arm64/boot/dts/qcom/sm6225-xiaomi-fog.dts
+@@ -66,8 +66,51 @@
+ 	status = "okay";
+ 	dr_mode = "peripheral";
+ 	maximum-speed = "high-speed";
++	/*
++	 * GHWPARAMS0 reports AWIDTH=64, but coherent buffers allocated above
++	 * 4 GiB were never written by the controller (event ring read back as
++	 * all-zero; GEVNTADRHI=1). Force 32-bit DMA so the event ring/TRBs
++	 * stay in the address range the USB master can actually reach.
++	 */
++	snps,force-32bit-dma;
+ };
+ 
++/*
++ * Real Khaje USB rails + PHY reset. The board needs L4/L12/L15 powered
++ * (the upstream dummy vregs leave the PHY without its 0.88 V core rail)
++ * and GCC_QUSB2PHY_PRIM_BCR deasserted, or the PHY never drives D+.
++ *
++ * cfg_ahb is deliberately absent: the USB clocks are protected in the
++ * GCC node, so gcc-sm6115 never registers GCC_AHB2PHY_USB_CLK. The femto
++ * driver force-enables it via MMIO (force_usb_clks), as upstream does.
++ * Do not add cfg_ahb back without removing the protected-clocks list —
++ * clk_get() on a protected clock returns NULL and the PHY loses the bus.
++ */
++&usb_hsphy {
++	clocks = <&xo_board>;
++	clock-names = "ref";
++	resets = <&gcc GCC_QUSB2PHY_PRIM_BCR>;
++	/*
++	 * Supply map from this phone's downstream DT (pbrp-live.dtb hsphy):
++	 *   vdd     = pm6125_l4  @ 0.88 V  -> mainline "vdda-pll"
++	 *   vdda18  = pm6125_l12 @ 1.80 V  -> mainline "vdda18"
++	 *   vdda33  = pm6125_l15 @ 3.23 V  -> mainline "vdda33"
++	 * The author's patch bound BOTH vdda-pll and vdda18 to l12, leaving
++	 * the 0.88 V core rail unpowered. With every digital setting correct
++	 * (GCTL=device, DCTL running, QSCRATCH VBUS override, event ring up)
++	 * the controller still reported DSTS=USBLNKST 3 (disconnected):
++	 * the PHY could not drive the D+ pullup without that rail.
++	 * l4 is shared with the UFS PHY and already pinned 880 mV.
++	 */
++	vdda-pll-supply = <&pm6125_l4a>;
++	vdda18-supply = <&pm6125_l12a>;
++	vdda33-supply = <&pm6125_l15a>;
++	/* Khaje line tuning, verbatim from this phone's downstream DT
++	 * (pbrp-live.dtb hsphy, panel variant). Applied by the patched
++	 * femto driver — mainline ignores this property upstream. */
++	qcom,param-override-seq = <0x67 0x6c 0x0f 0x70 0x2c 0x74>;
++};
++
+ &pon_pwrkey {
+ 	status = "okay";
+ };

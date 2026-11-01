@@ -16,9 +16,18 @@ FULL=/var/log/rain-dmesg.txt
     echo "udc state: [$(cat /sys/class/udc/*/state 2>/dev/null)]"
     echo "gadget UDC: [$(cat /sys/kernel/config/usb_gadget/g1/UDC 2>/dev/null)]"
     echo "ttyGS: [$(ls /dev/ttyGS* 2>/dev/null | tr '\n' ' ')]"
-    echo "usb-gadget: $(systemctl is-active usb-gadget.service 2>/dev/null)"
+    echo "usb-gadget (acm): $(systemctl is-active usb-gadget.service 2>/dev/null)"
+    echo "usb-adb-gadget: $(systemctl is-active usb-adb-gadget.service 2>/dev/null)"
+    echo "adbd: $(systemctl is-active adbd.service 2>/dev/null)"
+    echo "ffs: [$(ls /dev/usb-ffs/adb 2>/dev/null | tr '\n' ' ')]"
+    echo "adb keys: $(wc -l </data/misc/adb/adb_keys 2>/dev/null || echo 0)"
     echo "gettyGS0:   $(systemctl is-active getty@ttyGS0.service 2>/dev/null)"
     echo "endpoint-event spam: $(dmesg 2>/dev/null | grep -c "unknown endpoint event")"
+
+    echo "--- adb gadget log (tail) ---"
+    tail -n 12 /var/log/usb-adb-gadget.log 2>/dev/null || echo "(no log)"
+    echo "--- adbd journal (tail) ---"
+    journalctl -u adbd.service -n 12 --no-pager 2>/dev/null | tail -n 12 || true
 
     echo "--- regulators (usb-relevant) ---"
     for r in /sys/class/regulator/regulator.*; do
@@ -35,7 +44,7 @@ FULL=/var/log/rain-dmesg.txt
     echo "python3: $(command -v python3 || echo MISSING)"
     echo "devmem node: $(ls -l /dev/mem 2>&1)"
     PYTHONUNBUFFERED=1 python3 -u - <<'PYEOF' 2>/tmp/rain-python.err
-import faulthandler, mmap, os, struct, sys
+import faulthandler, mmap, os, struct, sys, time
 faulthandler.enable()
 PAGE = 4096
 fd = os.open("/dev/mem", os.O_RDONLY | os.O_SYNC)
@@ -56,11 +65,48 @@ def dump(title, regs):
             print("%-16s @0x%08x EXC %s" % (name, addr, e), flush=True)
 
 DUMP = [("GSNPSID", 0x04E0C120), ("GCTL", 0x04E0C110),
+        ("GHWPARAMS0", 0x04E0C140), ("GHWPARAMS1", 0x04E0C144),
+        ("GHWPARAMS6", 0x04E0C158),
         ("GUSB2PHYCFG", 0x04E0C200), ("GUSB3PIPECTL", 0x04E0C2C0),
         ("GEVNTADRLO", 0x04E0C400), ("GEVNTADRHI", 0x04E0C404),
         ("GEVNTSIZ", 0x04E0C408), ("GEVNTCNT", 0x04E0C40C),
         ("DCTL", 0x04E0C704), ("DSTS", 0x04E0C70C)]
 dump("dwc3 core", DUMP)
+
+# The event ring is the prime suspect: GEVNTADRHI != 0 means the ring was
+# allocated above 4 GiB. If GHWPARAMS0.AWIDTH says 64 but the interconnect
+# truncates, the controller writes nowhere and every event reads as zero
+# ("unknown endpoint event 0"). Record what we can prove.
+print("--- event ring / dma width ---", flush=True)
+ghw0 = rd(0x04E0C140)
+print("GHWPARAMS0.AWIDTH  = %d bits" % ((ghw0 >> 24) & 0xff))
+print("GHWPARAMS0.MDWIDTH = %d bits" % ((ghw0 >> 8) & 0xff))
+print("GHWPARAMS0.MODE    = %d (0=gadget)" % (ghw0 & 0x3))
+evt = rd(0x04E0C400) | (rd(0x04E0C404) << 32)
+print("event ring phys    = 0x%x" % evt)
+c1 = rd(0x04E0C40C)
+time.sleep(0.2)
+c2 = rd(0x04E0C40C)
+print("GEVNTCNT now/+200ms= %d / %d" % (c1, c2))
+try:
+    base = evt & ~(PAGE - 1)
+    mm = mmap.mmap(fd, PAGE, mmap.MAP_SHARED, mmap.PROT_READ, offset=base)
+    try:
+        raw = mm[evt - base:evt - base + 32]
+    finally:
+        mm.close()
+    print("event ring[0:32]   = %s" % raw.hex())
+except Exception as e:
+    print("event ring read failed (STRICT_DEVMEM?): %s" % e)
+
+# USB GCC block: GDSC + branch-clock enables poked by the femto driver.
+dump("gcc usb", [
+    ("USB30_GDSC", 0x0141A004),
+    ("USB30_CLK_010", 0x0141A010), ("USB30_CLK_014", 0x0141A014),
+    ("USB30_CLK_018", 0x0141A018),
+    ("USB30_AXI_SYS", 0x0141A080), ("USB30_AXI_CFG", 0x0141A084),
+    ("AHB2PHY_BCR", 0x0141D000), ("AHB2PHY_CBCR", 0x0141D008),
+])
 
 # QSCRATCH: 0x4ef8800 is mapped by dwc3-qcom for 0x400 bytes.
 dump("qscratch (glue)", [
