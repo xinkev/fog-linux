@@ -5,7 +5,7 @@ OUT   := $(BASE)/out/ubuntu-dualboot
 RUN   := docker run --rm --privileged -v "$(CURDIR)":/src -w /src
 SKIP_CUST ?= 0
 
-.PHONY: help doctor kernel image rootfs test logs android
+.PHONY: help doctor verify kernel image rootfs test logs android
 
 doctor:          ## what's missing here (images, kernel, phone)
 	@tools/doctor.sh
@@ -18,8 +18,12 @@ kernel:          ## rebuild Image.gz + DTBs
 	  O=/src/$(BASE)/out/linux-7.1.5 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
 	  -j8 olddefconfig Image.gz dtbs
 
-image:           ## repack boot-linux.img from kernel + DTB + initramfs
+verify:          ## sanity-check the packed boot image (header, dtb, board-id)
+	@tools/verify-image.sh
+
+image:           ## repack boot-linux.img, then verify it
 	$(RUN) fog-build:latest bash $(BASE)/tools/pack-ubuntu-boot.sh
+	@tools/verify-image.sh
 
 rootfs:          ## install build/overlay/ into the cust image (no reflash)
 	$(RUN) fog-rootfs:latest bash build/install-overlay.sh

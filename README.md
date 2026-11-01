@@ -29,7 +29,8 @@ make logs     # what the last boot reported
 | `make test` | flash → boot → self-reboot → pull logs (unattended, ~4 min) |
 | `make logs` | summary of the last pulled boot report |
 | `make rootfs` | install `build/overlay/` into the `cust` image |
-| `make image` | rebuild `boot-linux.img` |
+| `make image` | rebuild `boot-linux.img`, then verify it |
+| `make verify` | check header, DTB and board-id before flashing |
 | `make kernel` | rebuild kernel + DTBs |
 | `make android` | back to stock MIUI |
 
