@@ -1,0 +1,26 @@
+# working state — never commit
+docs/.scratch/
+.docker/
+.DS_Store
+
+# build outputs (regenerate; share binaries separately)
+Redmi10c-base/out/
+build/*.log
+
+# upstream clone (own .git) and vendor firmware/images — never in this repo
+Redmi10c-base/
+reference/
+vendor_boot
+*.img
+*.dtb
+*.cpio.gz
+
+# vendored upstream clones, build products, caches, signing key
+tools/avb/
+out/
+__pycache__/
+*.pyc
+build/avb_testkey.pem
+
+# compiled helper (source tracked; rebuild with aarch64-linux-gnu-gcc -static)
+build/overlay/usr/local/sbin/rain-reboot-bootloader

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=USB ACM serial gadget (rain console)
+DefaultDependencies=no
+After=sys-kernel-config.mount
+Before=getty@ttyGS0.service
+Wants=sys-kernel-config.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/usb-gadget.sh
+StandardOutput=kmsg
+StandardError=kmsg
+
+[Install]
+WantedBy=multi-user.target

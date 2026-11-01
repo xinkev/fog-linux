@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Rain: reboot to bootloader after a test boot (autonomous iteration)
+After=rain-boot-report.service multi-user.target
+Wants=rain-boot-report.service
+ConditionPathExists=/etc/rain-autoreboot
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Give the report time to be written and the gadget one last chance to bind.
+ExecStartPre=/bin/sleep 45
+ExecStart=/usr/local/sbin/rain-reboot-bootloader bootloader
+StandardOutput=kmsg
+StandardError=kmsg
+
+[Install]
+WantedBy=multi-user.target

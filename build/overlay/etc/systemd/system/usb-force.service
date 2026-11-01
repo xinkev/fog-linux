@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Force USB PHY/GDSC state before binding the gadget
+DefaultDependencies=no
+Before=usb-gadget.service
+After=sys-kernel-config.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/usb-force.py
+StandardOutput=kmsg
+StandardError=kmsg
+
+[Install]
+WantedBy=multi-user.target
