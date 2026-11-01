@@ -21,15 +21,16 @@ make doctor      # what exists here, what the phone is doing
 gh issue list    # open work, newest decisions in the issue bodies
 ```
 
-Then read **RUNBOOK → USB / adb** before changing anything about USB: it has
-the root cause (32-bit DWC3 DMA), the userspace stack, and the dead ends.
+Then read **RUNBOOK → Using adb** before driving the phone: it has the
+state table (Linux vs PBRP vs Android vs fastboot), the cookbook, the root
+cause (32-bit DWC3 DMA), and the dead ends.
 
 ## Start here
 
 ```
 make doctor   # what is missing on this machine / phone
+make adb      # what adb is talking to + the cookbook
 make test     # flash -> boot -> adb check -> self-reboot -> pull logs
-adb devices   # during the boot window: "rain device"
 ```
 
 The image self-reboots 45 s after its boot report; `adb shell rm
@@ -40,11 +41,12 @@ The image self-reboots 45 s after its boot report; `adb shell rm
 | Command | Does |
 |---|---|
 | `make doctor` | preflight: docker images, kernel, images, phone state |
+| `make adb` | what adb is talking to (Linux/PBRP/Android) + cookbook |
 | `make test` | flash → boot → adb check → self-reboot → pull logs (~4 min) |
 | `make test SKIP_CUST=1` | same, without the slow `cust` flash (~2 min) |
 | `make logs` | summary of the last pulled boot report |
 | `make rootfs` | install `build/overlay/` + adbd into the `cust` image |
-| `make adbd` | stage adbd debs and this host's adb public key |
+| `make adbd-debs` | stage adbd debs and this host's adb public key |
 | `make image` | rebuild `boot-linux.img`, then verify it |
 | `make verify` | check header, DTB and board-id before flashing |
 | `make kernel` | rebuild kernel + DTBs |

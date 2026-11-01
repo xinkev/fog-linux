@@ -10,7 +10,9 @@ Occasional guessing is fine but almost always prefer evidence based approach. Fo
 ## 1. Before work
 
 Start every session with `make doctor` and `gh issue list`; the open work lives
-in issues, not in this tree.
+in issues, not in this tree. `make doctor` says whether the phone is Linux
+(`adb shell` is root), PBRP, Android or fastboot; `make adb` prints the adb
+cookbook.
 
 | Task | Artifact |
 | --- | --- |

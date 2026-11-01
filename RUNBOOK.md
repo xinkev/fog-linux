@@ -3,10 +3,9 @@
 Base: [Damir00109/Redmi10c](UPSTREAM.md) (GPL-2.0), mainline **v7.1.5** +
 `patches/redmi10c-mainline-20260813.patch`.
 
-**Status 2026-11-01: mainline Linux boots on this phone** (slot B) to a
-framebuffer login prompt on Ubuntu 24.04 running from `cust`. USB gadget
-(adb/ACM console) is **not** up yet — see *Known gaps*. Slot A is stock MIUI
-Android and is the fallback.
+**Status 2026-11-02: mainline Linux boots on this phone** (slot B) to a
+framebuffer login prompt on Ubuntu 24.04 from `cust`; **adb over USB works**
+(root shell). Slot A is stock MIUI Android and is the fallback.
 
 ---
 
@@ -19,6 +18,35 @@ Android and is the fallback.
 | `cust` | Ubuntu 24.04 rootfs (`rain-ubuntu`, ext4, 1.8 GB image / ~514 MB sparse) |
 
 Return to Android: `fastboot --set-active=a && fastboot reboot`.
+
+## Using adb (quick)
+
+`make adb` prints what adb is currently talking to and the cookbook.
+
+| `adb devices -l` shows | What it is | Next |
+| --- | --- | --- |
+| `rain device` | Linux from slot B | `adb shell` (root) |
+| `… recovery product:fog` | PBRP recovery (RAM boot) | `make test SKIP_CUST=1` |
+| `… product:fog_eea` | stock Android, slot A | `make test SKIP_CUST=1` |
+| `unauthorized` | adbd up, host key missing | `make rootfs`, reboot |
+| fastboot list | bootloader | `make test` |
+
+`adb shell uname -r` disambiguates: `7.x` is the Linux port; a 4.19 kernel is
+PBRP or Android.
+
+```sh
+adb shell 'uname -a; id'              # root on rain-ubuntu
+adb shell dmesg -w                    # live kernel log
+adb pull /var/log/rain-boot-report.txt
+adb push file /usr/local/sbin/        # userspace edits need no cust reflash
+adb forward tcp:2222 tcp:22           # with: adb shell systemctl enable --now ssh
+adb exec-out cat /dev/fb0 > screen.raw
+adb shell rm /etc/rain-autoreboot     # stop the 45 s self-reboot
+adb reboot bootloader
+```
+
+This adbd reports "authentication not required"; the host key is a fallback.
+`make adb` never flashes or changes the phone.
 
 ---
 
@@ -156,11 +184,9 @@ fastboot --set-active=b
 fastboot reboot
 ```
 
-Boot takes ~20–25 s. Success signal is **on the phone**: framebuffer console
-then `rain-ubuntu login:`. The host sees no USB device yet, so `adb devices`
-stays empty — that is not a failure of the boot.
-
-Login: `root` / `rain` (need an OTG keyboard until USB gadget works).
+Boot takes ~20–25 s. Success signal is the framebuffer console and, once
+adbd starts, `adb devices` → `rain device`. Login: `root` / `rain`; adb
+needs no keyboard.
 
 ---
 
@@ -170,7 +196,7 @@ Login: `root` / `rain` (need an OTG keyboard until USB gadget works).
 | --- | --- |
 | No USB, no adb, no fastboot, screen dark/hung | ABL rejected our DTB or kernel panicked early — check `qcom,board-id` (0x40022) and that `boot_b` is header v2 |
 | Comes up as Android (`product:fog_eea`, kernel 4.19) | **usually the slot retry counter, not vbmeta** — see below; check `getvar slot-retry-count:b` |
-| Boots, no `adb`/`/dev/ttyACM*` | expected today: no gadget unit in rootfs (pivot-init unbinds UDC before `switch_root`) |
+| Boots, no `adb` | `systemctl status usb-adb-gadget adbd`, `cat /sys/class/udc/*/state`, `/var/log/rain-boot-report.txt`; `make logs` after a test |
 
 ### Slot retry counter (the silent fallback)
 

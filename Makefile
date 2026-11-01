@@ -5,13 +5,13 @@ OUT   := $(BASE)/out/ubuntu-dualboot
 RUN   := docker run --rm --privileged -v "$(CURDIR)":/src -w /src
 SKIP_CUST ?= 0
 
-.PHONY: help doctor patch verify kernel image rootfs adbd test logs android
+.PHONY: help doctor adb patch verify kernel image rootfs adbd-debs test logs android
 
 doctor:          ## what's missing here (images, kernel, phone)
 	@tools/doctor.sh
 
 help:            ## list targets
-	@grep -E '^[a-z]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
+	@grep -E '^[a-z][a-z-]*:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
 
 patch:           ## apply local kernel patches (idempotent)
 	@[ -d $(BASE)/mainline/linux-7.1.y ] || { \
@@ -25,7 +25,10 @@ patch:           ## apply local kernel patches (idempotent)
 	  patch -p1 -d $(BASE)/mainline/linux-7.1.y < patches/fog-adb-usb.patch; \
 	fi
 
-adbd:            ## stage adbd debs + this host's adb public key
+adb:             ## show what adb is talking to + the usage cookbook
+	@tools/adb-status.sh
+
+adbd-debs:       ## stage adbd debs + this host's adb public key
 	@tools/fetch-adbd-debs.sh
 	@mkdir -p docs/.scratch/adbd
 	@cp -f "$$HOME/.android/adbkey.pub" docs/.scratch/adbd/adbkey.pub 2>/dev/null \
@@ -44,7 +47,7 @@ image: patch     ## repack boot-linux.img, then verify it
 	@tools/verify-image.sh
 
 rootfs:          ## install build/overlay/ + adbd into the cust image
-	@ls docs/.scratch/adbd/debs/adbd_*.deb >/dev/null 2>&1 || $(MAKE) --no-print-directory adbd
+	@ls docs/.scratch/adbd/debs/adbd_*.deb >/dev/null 2>&1 || $(MAKE) --no-print-directory adbd-debs
 	@mkdir -p docs/.scratch/adbd
 	@cp -f "$$HOME/.android/adbkey.pub" docs/.scratch/adbd/adbkey.pub 2>/dev/null || true
 	$(RUN) fog-rootfs:latest bash build/install-overlay.sh

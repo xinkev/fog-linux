@@ -34,9 +34,15 @@ else no "linux_rootfs.sparse.img — make rootfs"; fi
 echo "device"
 adb_state=$(adb devices 2>/dev/null | awk 'NR>1 && NF {print $2; exit}')
 if [ "$adb_state" = "device" ]; then
-    ok "adb: $(adb devices -l 2>/dev/null | awk 'NR==2 {print $4, $5}')"
+    kver=$(adb shell uname -r 2>/dev/null | tr -d '\r')
+    case "$kver" in
+        7.*) ok "adb: Linux ($kver) — adb shell is root; 'make adb' for the cookbook" ;;
+        *)   ok "adb: Android/recovery ($kver) — not the Linux port; 'make test SKIP_CUST=1'" ;;
+    esac
 elif [ "$adb_state" = "recovery" ]; then
-    ok "adb: recovery (PBRP) — RAM boot, no slot written"
+    ok "adb: recovery (PBRP) — RAM boot; boot Linux: 'make test SKIP_CUST=1'"
+elif [ "$adb_state" = "unauthorized" ]; then
+    ok "adb: unauthorized — 'make rootfs' installs this host's key"
 elif fastboot devices 2>/dev/null | grep -q .; then
     ok "fastboot: slot=$(fastboot getvar current-slot 2>&1 | head -1 | sed 's/.*: //')" \
        "retry_b=$(fastboot getvar slot-retry-count:b 2>&1 | head -1 | sed 's/.*: //')"
