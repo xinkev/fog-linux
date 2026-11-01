@@ -13,10 +13,19 @@ One blocker left: USB never enumerates.
 
 Roadmap: **P2** grow `cust` → ~20 GB · **P3** Wi-Fi/BT/display/touch · **P4** GPU, audio, modem.
 
+## Start here
+
+```
+make doctor   # what is missing on this machine / phone
+make test     # flash -> boot -> self-reboot -> pull logs
+make logs     # what the last boot reported
+```
+
 ## Commands
 
 | Command | Does |
 |---|---|
+| `make doctor` | preflight: docker images, kernel, images, phone state |
 | `make test` | flash → boot → self-reboot → pull logs (unattended, ~4 min) |
 | `make logs` | summary of the last pulled boot report |
 | `make rootfs` | install `build/overlay/` into the `cust` image |
@@ -29,7 +38,7 @@ Roadmap: **P2** grow `cust` → ~20 GB · **P3** Wi-Fi/BT/display/touch · **P4*
 ## Layout
 
 ```
-tools/        testboot-loop, watch-boot, serial-probe
+tools/        doctor, testboot-loop, watch-boot, serial-probe
 build/        Dockerfiles + overlay/ (units, scripts installed into cust)
 docs/         CHANGELOG (why) · .scratch/ (logs, plans — gitignored)
 RUNBOOK.md    how to build, flash, recover, read logs    <- reference

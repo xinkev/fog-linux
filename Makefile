@@ -5,7 +5,10 @@ OUT   := $(BASE)/out/ubuntu-dualboot
 RUN   := docker run --rm --privileged -v "$(CURDIR)":/src -w /src
 SKIP_CUST ?= 0
 
-.PHONY: help kernel image rootfs test logs android
+.PHONY: help doctor kernel image rootfs test logs android
+
+doctor:          ## what's missing here (images, kernel, phone)
+	@tools/doctor.sh
 
 help:            ## list targets
 	@grep -E '^[a-z]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
