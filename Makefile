@@ -10,13 +10,13 @@ CUST  := $(OUT)/linux_rootfs.sparse.img
 -include device.local.mk
 export WLAN_MAC
 
-.PHONY: help doctor adb base kernel image rootfs verify test test-slot logs android
+.PHONY: help doctor adb bootloader base kernel image rootfs verify test test-slot logs android
 
 doctor:          ## what's missing here (images, kernel, phone)
 	@tools/doctor.sh
 
 help:            ## list targets
-	@grep -E '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
+	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
 
 base:            ## fetch v7.3.0 worktree + firmware + cloud rootfs + container
 	@tools/v730-build.sh base
@@ -36,6 +36,9 @@ verify:          ## sanity-check the packed boot image (header, dtb, board-id)
 adb:             ## show what adb is talking to + the usage cookbook
 	@tools/adb-status.sh
 
+bootloader:      ## phone -> fastboot (adb reboot bootloader does NOT work on Linux)
+	@tools/to-bootloader.sh
+
 test:            ## RAM-boot the image, check adb/display, return to fastboot
 	@BOOT_IMG=$(BOOT) tools/testboot-loop.sh
 
@@ -47,6 +50,5 @@ logs:            ## summary of the last pulled boot report
 	  || echo "no report yet - run 'make test'"
 
 android:         ## return to stock MIUI (slot A)
-	@fastboot devices 2>/dev/null | grep -q . || adb reboot bootloader
-	@for i in $$(seq 1 30); do fastboot devices 2>/dev/null | grep -q . && break; sleep 1; done
+	@tools/to-bootloader.sh
 	fastboot --set-active=a && fastboot reboot

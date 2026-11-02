@@ -39,6 +39,7 @@ Return to Android: `fastboot --set-active=a && fastboot reboot`.
 | fastboot list | bootloader | `make test` |
 
 ```sh
+make bootloader                       # back to fastboot — NOT `adb reboot bootloader`
 adb shell 'uname -a; id'              # root on fog-ubuntu
 adb shell dmesg -w                    # live kernel log
 adb shell 'cat /sys/class/drm/card0-DSI-1/status'   # connected
@@ -50,6 +51,13 @@ adb exec-out cat /dev/fb0 > screen.raw
 
 This adbd reports "authentication not required"; the rootfs build installs
 this host's key as a fallback.
+
+**Leaving Linux:** `adb reboot bootloader` only does a normal reboot on the
+26.04 rootfs — systemd cannot pass a reboot reason, so ABL boots a slot
+instead of fastboot. That looks like "the boot command did nothing". Use
+`make bootloader` (`tools/to-bootloader.sh`), which pushes the static
+`rain-reboot-bootloader` helper, runs it, and waits for fastboot; from PBRP or
+Android the script just calls `adb reboot bootloader`, which works there.
 
 ---
 
@@ -166,6 +174,9 @@ fastboot boot Redmi10c-base/v730/rootfs/out/boot-linux.img   # no slot write
 fastboot flash cust Redmi10c-base/v730/rootfs/out/linux_rootfs.sparse.img
 ```
 
+Get to fastboot first with `make bootloader` (from Linux you cannot rely on
+`adb reboot bootloader`).
+
 For a persistent slot-B install (only if RAM boot is refused): erase
 `dtbo_b`, flash `boot_b` + `vbmeta_b` + `cust`, `--set-active=b`, reboot.
 Read AGENTS.md §5 first — a failed slot boot burns one of 7 retries.
@@ -258,9 +269,10 @@ adb shell 'mkdir -p /cust && mount -t ext4 -o ro /dev/block/sda8 /cust && \
 ```
 
 The 26.04 rootfs has no `rain-autoreboot`/report service any more, so
-`make test` talks to adb directly and returns to fastboot with the
-`rain-reboot-bootloader` helper (systemd's `/sbin/reboot` cannot pass a
-reboot reason; the helper issues `reboot(2)` with `RESTART2 "bootloader"`).
+`make test` talks to adb directly and returns to fastboot with
+`make bootloader` (the static `rain-reboot-bootloader` helper issues
+`reboot(2)` with `RESTART2 "bootloader"`, which systemd's `/sbin/reboot`
+cannot do).
 
 ## Automation
 

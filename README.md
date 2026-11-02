@@ -40,6 +40,7 @@ before driving the phone.
 | `make kernel` | kernel 7.3 + our fog DTS deltas (board-id, HS-PHY) + modules |
 | `make image` | pack `boot-linux.img` (pivot initramfs) + `make verify` |
 | `make rootfs` | build Ubuntu 26.04 `cust` image (sparse) |
+| `make bootloader` | phone → fastboot (`adb reboot bootloader` only reboots on Linux) |
 | `make test` | RAM boot → wait adb → capture `adb-check.txt` → back to fastboot |
 | `make test-slot` | legacy: flash slot B + cust (burns a retry if it fails) |
 | `make verify` | boot image header / DTB / board-id check |

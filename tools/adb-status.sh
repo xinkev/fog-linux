@@ -85,7 +85,7 @@ adb push file /usr/local/sbin/        userspace edits need no cust reflash
 adb forward tcp:2222 tcp:22           with: adb shell systemctl enable --now ssh
 adb exec-out cat /dev/fb0 > screen.raw
 adb shell rm /etc/rain-autoreboot     stop the 45 s self-reboot
-adb reboot bootloader                 back to fastboot
+make bootloader                       back to fastboot (adb reboot bootloader only reboots)
 
 The image self-reboots 45 s after its boot report unless the flag is removed.
 adbd here reports "authentication not required"; the host key is a fallback.

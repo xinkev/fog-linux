@@ -55,12 +55,9 @@ log() { echo "[$(date +%H:%M:%S)] $*"; }
 # The static helper issues reboot(2) with LINUX_REBOOT_CMD_RESTART2,
 # which ABL honours.
 reboot_to_fastboot() {
-  local h="$ROOT/build/overlay/usr/local/sbin/rain-reboot-bootloader"
-  if [ -f "$h" ] && adb push "$h" /tmp/rrb >/dev/null 2>&1; then
-    adb shell 'chmod 755 /tmp/rrb; /tmp/rrb bootloader' >/dev/null 2>&1
-  else
-    adb reboot bootloader 2>/dev/null
-  fi
+  # `adb reboot bootloader` is a plain reboot on the 26.04 rootfs; the shared
+  # helper knows how to ask ABL properly (see tools/to-bootloader.sh).
+  "$ROOT/tools/to-bootloader.sh" >/dev/null 2>&1 || adb reboot bootloader 2>/dev/null
 }
 
 # --- RAM-boot mode (default for the v7.3.0 image) ---------------------------

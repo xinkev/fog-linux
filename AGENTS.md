@@ -14,6 +14,12 @@ in issues, not in this tree. `make doctor` says whether the phone is Linux
 (`adb shell` is root), PBRP, Android or fastboot; `make adb` prints the adb
 cookbook.
 
+**From Linux, `adb reboot bootloader` only does a normal reboot** — systemd
+cannot pass a reboot reason, so ABL picks a slot instead of fastboot. Use
+`make bootloader` (`tools/to-bootloader.sh`): it pushes the static helper that
+issues `reboot(2)` with `RESTART2 "bootloader"`, then waits for fastboot. The
+same command is harmless when the phone is already in fastboot.
+
 | Task | Artifact |
 | --- | --- |
 | New design | `docs/specs/<date>-<slug>.md` — goal, non-goals, acceptance, risks |
