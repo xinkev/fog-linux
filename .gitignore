@@ -1,4 +1,6 @@
 # working state — never commit
+# per-unit values (WLAN_MAC=...), included by the Makefile
+device.local.mk
 docs/.scratch/
 .docker/
 .DS_Store

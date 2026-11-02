@@ -6,6 +6,10 @@ OUT   := $(V730)/rootfs/out
 BOOT  := $(OUT)/boot-linux.img
 CUST  := $(OUT)/linux_rootfs.sparse.img
 
+# Per-unit values (WLAN_MAC=...), gitignored — MACs are not repo material.
+-include device.local.mk
+export WLAN_MAC
+
 .PHONY: help doctor adb base kernel image rootfs verify test test-slot logs android
 
 doctor:          ## what's missing here (images, kernel, phone)

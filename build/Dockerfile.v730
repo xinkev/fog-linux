@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates \
     rsync e2fsprogs util-linux kmod \
     android-sdk-libsparse-utils \
+    wireless-regdb \
     sudo \
     file zip unzip \
  && rm -rf /var/lib/apt/lists/*

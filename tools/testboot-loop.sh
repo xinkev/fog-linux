@@ -67,67 +67,96 @@ reboot_to_fastboot() {
 # Writes no slot and cannot burn the slot-retry counter. There is no
 # rain-autoreboot in the 26.04 rootfs, so the loop returns the phone to
 # fastboot itself.
+#
+# This ABL is unreliable about `fastboot boot`: it can print "Booting ...
+# OKAY" and then stay in fastboot (the transfer did not take), and a boot that
+# falls back to a slot looks identical until adb shows up. So every attempt is
+# judged by what actually answered — the fog 26.04 image on kernel 7.3 — and a
+# wrong answer is retried instead of being reported as a pass.
 run_ram_boot() {
-  local i st
-  if ! have_fb; then
+  local attempt st k left i check wait_secs=120
+  [ "$TIMEOUT" -lt "$wait_secs" ] && wait_secs=$TIMEOUT
+
+  for attempt in 1 2 3; do
+    if ! have_fb; then
+      if have_adb; then
+        log "linux/adb device present -> reboot bootloader"
+        reboot_to_fastboot
+      fi
+      wait_fb 60 || { log "FAIL: no fastboot device (power-cycle needed)"; return 2; }
+    fi
+
+    log "RAM boot $(basename "$BOOT_IMG") ($(du -h "$BOOT_IMG" | cut -f1)) [try $attempt]"
+    fastboot boot "$BOOT_IMG" >/dev/null 2>&1 || log "WARN: 'fastboot boot' returned an error"
+
+    # Leaving fastboot is necessary but not sufficient (a slot boot does that
+    # too); staying in fastboot for 10 s means the image never ran at all.
+    left=0
+    for ((k = 0; k < 10; k++)); do
+      sleep 1
+      have_fb || { left=1; break; }
+    done
+    if [ "$left" -eq 0 ]; then
+      log "WARN: still in fastboot 10 s after 'fastboot boot' — transfer did not take"
+      continue
+    fi
+
+    log "waiting up to ${wait_secs}s for adb"
+    st=""
+    for ((i = 0; i < wait_secs; i += 3)); do
+      sleep 3
+      st=$(adb devices 2>/dev/null | awk 'NR>1 && $2=="device"{print $1; exit}')
+      [ -n "$st" ] && break
+      if in_android; then
+        log "WARN: booted Android instead of the RAM image (slot fallback)"
+        break
+      fi
+    done
+
+    # A boot only counts if it is the 26.04 fog image. Anything else on adb
+    # (a legacy `rain` rootfs, a wrong kernel, another phone) used to pass as
+    # "booted"; that hides exactly the regressions this loop exists to catch.
+    if [ -n "$st" ] && check=$("$ROOT/tools/adb-status.sh" --check); then
+      log "adb up: $st"
+      log "identity: $check"
+      {
+        adb devices -l
+        echo "--- identity ---"
+        adb shell 'uname -r; grep PRETTY_NAME /etc/os-release; id; cat /sys/class/udc/*/state' 2>&1
+        echo "--- systemd ---"
+        adb shell 'systemctl is-system-running; systemctl --failed --no-legend' 2>&1
+        echo "--- display ---"
+        adb shell 'cat /sys/class/drm/card0-DSI-1/status; cat /sys/class/graphics/fb0/virtual_size' 2>&1
+        echo "--- touch ---"
+        adb shell 'grep -A1 fts_ts /proc/bus/input/devices; dmesg | grep -i fts | tail -3' 2>&1
+        echo "--- wifi ---"
+        adb shell 'ip -br link show wlan0; cat /sys/class/net/wlan0/address' 2>&1
+        echo "--- regulatory ---"
+        adb shell 'dmesg | grep -i "regulatory" | tail -3; iw reg get | head -2' 2>&1
+      } >"$SCRATCH/adb-check.txt" 2>&1
+      log "wrote $SCRATCH/adb-check.txt"
+
+      log "returning to fastboot"
+      reboot_to_fastboot
+      wait_fb 90 || log "WARN: did not return to fastboot"
+      return 0
+    fi
+
+    log "WARN: try $attempt did not boot the fog image: ${check:-no adb within ${wait_secs}s}"
+    {
+      echo "attempt $attempt: ${check:-no adb within ${wait_secs}s}"
+      adb devices -l 2>/dev/null
+      adb shell 'uname -a; hostname' 2>&1
+    } >"$SCRATCH/adb-check.txt" 2>&1
+
     if have_adb; then
-      log "linux/adb device present -> reboot bootloader"
       reboot_to_fastboot
     fi
-    wait_fb 60 || { log "FAIL: no fastboot device (power-cycle needed)"; return 2; }
-  fi
-  log "RAM boot $(basename "$BOOT_IMG") ($(du -h "$BOOT_IMG" | cut -f1))"
-  fastboot boot "$BOOT_IMG" >/dev/null 2>&1 || { log "FAIL: fastboot boot refused"; return 3; }
-
-  log "waiting up to ${TIMEOUT}s for adb"
-  st=""
-  for ((i = 0; i < TIMEOUT; i += 3)); do
-    sleep 3
-    st=$(adb devices 2>/dev/null | awk 'NR>1 && $2=="device"{print $1; exit}')
-    [ -n "$st" ] && break
+    wait_fb 60 || { log "FAIL: cannot get back to fastboot"; return 2; }
   done
-  if [ -z "$st" ]; then
-    log "FAIL: no adb after ${TIMEOUT}s (kernel or userspace did not come up)"
-    return 4
-  fi
-  log "adb up: $st"
 
-  # A boot only counts if it is the 26.04 fog image. Anything else on adb
-  # (a legacy `rain` rootfs, a wrong kernel, another phone) used to pass as
-  # "booted"; that hides exactly the regressions this loop exists to catch.
-  if ! check=$("$ROOT/tools/adb-status.sh" --check); then
-    log "FAIL: adb is up but not the fog 26.04 image: $check"
-    {
-      echo "identity check failed: $check"
-      adb devices -l
-      adb shell 'uname -a; hostname; id' 2>&1
-    } >"$SCRATCH/adb-check.txt" 2>&1
-    log "wrote $SCRATCH/adb-check.txt; returning to fastboot"
-    reboot_to_fastboot
-    wait_fb 90 || log "WARN: did not return to fastboot"
-    return 5
-  fi
-  log "identity: $check"
-
-  {
-    adb devices -l
-    echo "--- identity ---"
-    adb shell 'uname -r; grep PRETTY_NAME /etc/os-release; id; cat /sys/class/udc/*/state' 2>&1
-    echo "--- systemd ---"
-    adb shell 'systemctl is-system-running; systemctl --failed --no-legend' 2>&1
-    echo "--- display ---"
-    adb shell 'cat /sys/class/drm/card0-DSI-1/status; cat /sys/class/graphics/fb0/virtual_size' 2>&1
-    echo "--- touch ---"
-    adb shell 'grep -A1 fts_ts /proc/bus/input/devices; dmesg | grep -i fts | tail -3' 2>&1
-    echo "--- wifi ---"
-    adb shell 'ip -br link show wlan0; cat /sys/class/net/wlan0/address' 2>&1
-  } >"$SCRATCH/adb-check.txt" 2>&1
-  log "wrote $SCRATCH/adb-check.txt"
-
-  log "returning to fastboot"
-  reboot_to_fastboot
-  wait_fb 90 || log "WARN: did not return to fastboot"
-  return 0
+  log "FAIL: 3 RAM-boot attempts did not boot the fog 26.04 image"
+  return 5
 }
 
 # --- 0. RAM boot (default) or legacy slot flash ----------------------------

@@ -114,6 +114,11 @@ make verify
 firmware → 42 MB cpio.zst) → **52.07 MiB**, header v2. `make verify` checks
 header, DTB magic, board-id and `xiaomi,fog`.
 
+`make image` is also where the per-unit values land: it re-applies the DTS
+deltas (board-id, HS-PHY, WLAN MAC from the gitignored `device.local.mk`) and
+rebuilds only the DTB if anything changed, then copies `regulatory.db` into
+the initramfs.
+
 ### 3. Rootfs (Ubuntu 26.04 on cust)
 
 ```sh
@@ -136,7 +141,11 @@ make test            # RAM boot: fastboot boot, wait adb, capture, return to fas
 ```
 
 Writes `docs/.scratch/adb-check.txt` (identity, systemd, display, touch,
-wifi). No slot is written, so the retry counter cannot be burned.
+wifi, regulatory). No slot is written, so the retry counter cannot be burned.
+Each attempt is judged by what answered: `fog` on kernel **7.3**; the legacy
+7.1.5 rootfs on the same `fog` serial is rejected. `fastboot boot` on this ABL
+sometimes reports OKAY and stays in fastboot, so the loop retries up to 3
+times before failing.
 
 `make test-slot` is the legacy flash path; avoid it (see AGENTS.md §5).
 
@@ -204,12 +213,17 @@ RAM boot: it writes no slot.
   step: pull `/vendor/firmware/focaltech_ts_fw_xinli.bin` from *this* phone
   (PBRP + super partition) and compare; if identical, look at SPI bitbang
   timing.
-- **`regulatory.db`**: missing from the initramfs (cfg80211 loads it before
-  `switch_root`); Wi-Fi still scans. Add `wireless-regdb` to the build image
-  and copy it into the initramfs.
-- **WLAN MAC**: upstream DTS hardcodes an OEM WLAN MAC ("OEM WLAN MAC from
-  Android") — that is *their* unit's MAC. Replace with ours from
-  `persist/wlan_mac.bin`, or remove the property.
+- ~~**`regulatory.db`**~~ fixed: the build container installs `wireless-regdb`
+  and `make image` copies `regulatory.db`+`.p7s` into the initramfs, because
+  cfg80211 asks for it before the pivot mounts `cust`. `iw reg get` now reports
+  the domain instead of `country 00`.
+- ~~**WLAN MAC**~~ fixed: the DTS gets this unit's factory MAC from
+  `device.local.mk` (`WLAN_MAC=aa:bb:cc:dd:ee:ff`, gitignored — MACs are not
+  repo material). `make image` re-applies the DTS deltas and rebuilds only the
+  DTB, so changing the MAC needs no `make kernel`. Without the file the
+  upstream MAC stays and the build says so. The factory MAC is readable on
+  stock Android: `adb shell dumpsys wifi | grep wifi_sta_factory_mac_address`
+  (the connected `MAC:` in `cmd wifi status` is a randomized one).
 - **Bluetooth**: `hci0: Frame reassembly failed (-84)` at boot; not
   investigated.
 - **GPS**: `rain-gps.service` runs, XTRA fetch fails without network; the

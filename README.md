@@ -11,14 +11,14 @@ slot-B install is possible but costs a retry each test (see AGENTS.md §5).
 
 | Works (verified on this unit) | Known broken |
 |---|---|
-| Ubuntu 26.04 from `cust`, root **adb over USB** | **touch**: FTS probes, firmware download fails (`crc abnormal`) |
+| Ubuntu 26.04 from `cust`, root **adb over USB** (`fog` serial) | **touch**: FTS probes, firmware download fails (`crc abnormal`) |
 | DRM panel 720x1650 + fbcon (`card0-DSI-1: connected`) | Bluetooth: `hci0 frame reassembly failed` |
-| Wi-Fi driver up, scans SSIDs (`wlan0`) | `regulatory.db` missing in initramfs |
-| Charger/gauge, Type-C, keys, vibrator | WLAN MAC is upstream's (hardcoded in DTS) |
-| Android on slot A untouched, 2 SIMs intact | audio/modem/GPS/sensors: upstream says working, **not verified here** |
+| Wi-Fi driver, `regulatory.db` loaded, this unit's factory MAC | audio/modem/GPS/sensors: upstream says working, **not verified here** |
+| Charger/gauge, Type-C, keys, vibrator | — |
+| Android on slot A untouched, 2 SIMs intact | — |
 
-Roadmap: **touch FW** (pull vendor blob from this phone) · Wi-Fi/BT polish ·
-P2 grow `cust` (issue #4) · then audio/modem/GPU.
+Roadmap: **touch FW** (pull vendor blob from this phone) · BT · grow `cust`
+(issue #4) · then audio/modem/GPU.
 
 ## Resuming in a new session
 

@@ -50,8 +50,8 @@ L12 the PHY core never got its 0.88 V rail and the UDC reported
 | Touch | works | driver probes, firmware download fails (`crc abnormal`, boot id 0x00) |
 | Bluetooth | HCI up, A2DP | `hci0: Frame reassembly failed (-84)` |
 | Wi-Fi | connected via NM | driver up, scans; not joined (no credentials yet) |
-| regulatory.db | in initramfs | missing (build host lacked `wireless-regdb`) |
-| WLAN MAC | their unit's MAC in DTS | same MAC baked in — must be replaced with ours |
+| regulatory.db | in initramfs | same (copied from `wireless-regdb` at image build) |
+| WLAN MAC | their unit's MAC in DTS | rewritten to this unit's MAC from `device.local.mk` (not committed) |
 
 ## Works here, not there
 

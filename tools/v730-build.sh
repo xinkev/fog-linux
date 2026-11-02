@@ -5,7 +5,8 @@
 #
 #   base    checkout worktree, firmware, cloud rootfs, container image
 #   kernel  kernel.patch + our fog DTS deltas, Image.gz/dtbs/modules
-#   image   pack boot-linux.img (pivot initramfs) and verify it
+#   image   re-apply DTS deltas (incl. WLAN_MAC), stage regulatory.db,
+#           pack boot-linux.img (pivot initramfs) and verify it
 #   rootfs  build the Ubuntu 26.04 `cust` image (tools/build-rootfs-v730.sh)
 #
 # All builds run in the arm64 `fog-v730` container (host is Apple Silicon, so
@@ -101,6 +102,27 @@ cmd_kernel() {
 cmd_image() {
   cmd_base
   [ -f "$DTS" ] || { echo "no kernel tree — run: $0 kernel" >&2; exit 1; }
+
+  # Re-apply the DTS deltas here too: the WLAN MAC comes from device.local.mk,
+  # and only `make image` is needed to pick a changed MAC up (dtbs only).
+  log "applying fog DTS deltas (board-id, HS-PHY, WLAN MAC)"
+  dts_out=$(python3 "$ROOT/tools/v730-fog-dts.py" "$DTS")
+  echo "$dts_out"
+  need_dtbs=0
+  [ -f "$KERN/arch/arm64/boot/dts/qcom/sm6225-xiaomi-fog.dtb" ] || need_dtbs=1
+  case "$dts_out" in *applied*) need_dtbs=1 ;; esac
+  if [ "$need_dtbs" -eq 1 ]; then
+    log "rebuilding dtbs"
+    docker_run bash -lc 'make -C out/src/linux O=/src/out/build/linux-7.3 \
+      ARCH=arm64 CROSS_COMPILE= -j"$(nproc)" dtbs'
+  fi
+
+  # cfg80211 asks for regulatory.db during kernel init — before the pivot
+  # mounts cust — so it has to sit in the initramfs, not just in the rootfs.
+  log "staging regulatory.db into the initramfs"
+  docker_run bash -lc 'cp -f /lib/firmware/regulatory.db \
+    /lib/firmware/regulatory.db.p7s /src/initramfs/lib/firmware/'
+
   docker_run bash -lc 'cd rootfs && ./tools/pack-boot-linux.sh'
   "$ROOT/tools/verify-image.sh" "$V730/rootfs/out/boot-linux.img"
 }

@@ -3,14 +3,16 @@
 # What is adb actually talking to, and how do I use it?
 #
 # `--check` is the machine-readable gate used by tools/testboot-loop.sh:
-#   0  the 26.04 `fog` image is up (adb serial `fog`, kernel 7.x)
+#   0  the 26.04 `fog` image is up (adb serial `fog`, kernel 7.3)
 #   1  adb is up but it is not that image (legacy `rain` rootfs, other kernel)
 #   2  no adb device
 #   3  adb has the device but not in state `device` (unauthorized/offline)
-# Override the expected serial with EXPECT_SERIAL=...
+# Override with EXPECT_SERIAL= and EXPECT_KVER= (prefix match on uname -r).
+# 7.1.5 is NOT good enough: the legacy slot-B rootfs runs 7.1.5 too.
 set -uo pipefail
 
 EXPECT_SERIAL="${EXPECT_SERIAL:-fog}"
+EXPECT_KVER="${EXPECT_KVER:-7.3}"
 
 if [ "${1:-}" = "--check" ]; then
     state=$(adb devices 2>/dev/null | awk 'NR>1 && NF {print $2; exit}')
@@ -23,9 +25,9 @@ if [ "${1:-}" = "--check" ]; then
     }
     kver=$(adb shell uname -r 2>/dev/null | tr -d '\r')
     case "$kver" in
-        7.*) echo "fog on Linux $kver"; exit 0 ;;
+        "$EXPECT_KVER"*) echo "fog on Linux $kver"; exit 0 ;;
     esac
-    echo "adb serial=$serial but kernel is '$kver', expected 7.x"
+    echo "adb serial=$serial but kernel is '$kver', expected $EXPECT_KVER.x"
     exit 1
 fi
 
